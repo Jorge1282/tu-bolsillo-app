@@ -345,6 +345,20 @@ var HISTORY_ENDPOINTS = [
   'https://cdn.jsdelivr.net/gh/grupoclip/bcv-api/api/v1/history.json'
 ];
 
+/* ---------- persistencia local (helper genérico sobre localStorage) ---------- */
+var Store = {
+  get: function(key, fallback){
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch(e){ console.error('Store.get error (' + key + ')', e); return fallback; }
+  },
+  set: function(key, value){
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+    catch(e){ console.error('Store.set error (' + key + ')', e); return false; }
+  }
+};
+
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function uid(){ return Date.now()+'-'+Math.random().toString(36).slice(2,8); }
 function monthKeyOf(d){ return d.slice(0,7); }
@@ -404,14 +418,11 @@ var state = {
 };
 
 function loadData(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY);
-    if (raw){
-      var parsed = JSON.parse(raw);
-      state.transactions = parsed.transactions || [];
-      state.goal = normalizeGoal(parsed.goal);
-    }
-  } catch(e){ console.error('load error', e); }
+  var parsed = Store.get(STORAGE_KEY, null);
+  if (parsed){
+    state.transactions = parsed.transactions || [];
+    state.goal = normalizeGoal(parsed.goal);
+  }
 }
 function normalizeGoal(g){
   if (!g) return { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0}, daily: {usd:0,ves:0} };
@@ -426,34 +437,20 @@ function normalizeGoal(g){
   return { monthly: { usd: g.usd||0, ves: g.ves||0 }, weekly: {usd:0,ves:0}, daily: {usd:0,ves:0} };
 }
 function saveData(){
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions: state.transactions, goal: state.goal }));
-    state.saveError = false;
-  } catch(e){
-    console.error('save error', e);
-    state.saveError = true;
-  }
+  state.saveError = !Store.set(STORAGE_KEY, { transactions: state.transactions, goal: state.goal });
 }
 function loadCachedRate(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_RATE);
-    if (raw) state.bcvRate = JSON.parse(raw);
-  } catch(e){ console.error('rate cache load error', e); }
+  state.bcvRate = Store.get(STORAGE_KEY_RATE, state.bcvRate);
 }
 function saveCachedRate(){
-  try { localStorage.setItem(STORAGE_KEY_RATE, JSON.stringify(state.bcvRate)); }
-  catch(e){ console.error('rate cache save error', e); }
+  Store.set(STORAGE_KEY_RATE, state.bcvRate);
 }
 function loadInitialBalance(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_BALANCE);
-    if (raw) state.initialBalance = JSON.parse(raw);
-  } catch(e){ console.error('balance load error', e); }
+  state.initialBalance = Store.get(STORAGE_KEY_BALANCE, state.initialBalance);
 }
 function saveInitialBalance(usd, ves){
   state.initialBalance = { usd: Number(usd)||0, ves: Number(ves)||0 };
-  try { localStorage.setItem(STORAGE_KEY_BALANCE, JSON.stringify(state.initialBalance)); }
-  catch(e){ console.error('balance save error', e); }
+  Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
   render();
   pushToCloud();
 }
@@ -480,13 +477,10 @@ function parseActivationCode(raw){
   return { plan: plan, serial: serial, days: PRO_PLAN_DAYS[plan] };
 }
 function loadPro(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_PRO);
-    if (raw) state.pro = JSON.parse(raw);
-  } catch(e){ console.error('pro load error', e); }
+  state.pro = Store.get(STORAGE_KEY_PRO, state.pro);
 }
 function saveProToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_PRO, JSON.stringify(state.pro)); } catch(e){}
+  Store.set(STORAGE_KEY_PRO, state.pro);
 }
 function isProActive(){
   if (!state.pro || !state.pro.active) return false;
@@ -614,22 +608,19 @@ function renderProGate(featureName){
 }
 
 function loadAuth(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_AUTH);
-    if (raw){
-      var parsed = JSON.parse(raw);
-      state.authUsername = parsed.username || '';
-      state.authPassHash = parsed.passHash || '';
-      state.authRecoveryHash = parsed.recoveryHash || '';
-      state.authMode = 'login';
-    } else {
-      state.authMode = 'setup';
-    }
-  } catch(e){ console.error('auth load error', e); state.authMode = 'setup'; }
+  var parsed = Store.get(STORAGE_KEY_AUTH, null);
+  if (parsed){
+    state.authUsername = parsed.username || '';
+    state.authPassHash = parsed.passHash || '';
+    state.authRecoveryHash = parsed.recoveryHash || '';
+    state.authMode = 'login';
+  } else {
+    state.authMode = 'setup';
+  }
   state.locked = true;
 }
 function persistAuth(){
-  try { localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify({ username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash })); } catch(e){}
+  Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash });
 }
 function generateRecoveryCode(){
   var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; /* sin 0/O ni 1/I/L, para que no se confundan al copiar a mano */
@@ -752,29 +743,21 @@ function regenerateRecoveryCode(){
 
 /* ---------- categorías personalizadas ---------- */
 function loadCustomCategories(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_CATEGORIES);
-    if (raw){
-      var parsed = JSON.parse(raw);
-      state.customCategories = { expense: parsed.expense || [], income: parsed.income || [] };
-    }
-  } catch(e){ console.error('custom categories load error', e); }
+  var parsed = Store.get(STORAGE_KEY_CATEGORIES, null);
+  if (parsed) state.customCategories = { expense: parsed.expense || [], income: parsed.income || [] };
   rebuildCategoryLists();
 }
 function saveCustomCategoriesToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(state.customCategories)); } catch(e){}
+  Store.set(STORAGE_KEY_CATEGORIES, state.customCategories);
 }
 
 /* ---------- presupuestos por categoría ---------- */
 /* ---------- ingreso mensual (meta) ---------- */
 function loadFamilyIncomeGoal(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_INCOME_GOAL);
-    if (raw) state.familyIncomeGoal = JSON.parse(raw);
-  } catch(e){ console.error('income goal load error', e); }
+  state.familyIncomeGoal = Store.get(STORAGE_KEY_INCOME_GOAL, state.familyIncomeGoal);
 }
 function saveFamilyIncomeGoalToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_INCOME_GOAL, JSON.stringify(state.familyIncomeGoal)); } catch(e){}
+  Store.set(STORAGE_KEY_INCOME_GOAL, state.familyIncomeGoal);
 }
 function saveFamilyIncomeGoal(){
   var usd = document.getElementById('incomeGoalUsd').value;
@@ -786,13 +769,10 @@ function saveFamilyIncomeGoal(){
 }
 
 function loadBudgets(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_BUDGETS);
-    if (raw) state.budgets = JSON.parse(raw);
-  } catch(e){ console.error('budgets load error', e); }
+  state.budgets = Store.get(STORAGE_KEY_BUDGETS, state.budgets);
 }
 function saveBudgetsToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_BUDGETS, JSON.stringify(state.budgets)); } catch(e){}
+  Store.set(STORAGE_KEY_BUDGETS, state.budgets);
 }
 function saveBudgets(){
   var budgets = {};
@@ -818,13 +798,10 @@ function budgetEquivalentInline(amount, currency){
 
 /* ---------- compromisos de pago ---------- */
 function loadPayments(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_PAYMENTS);
-    if (raw) state.paymentCommitments = JSON.parse(raw);
-  } catch(e){ console.error('payments load error', e); }
+  state.paymentCommitments = Store.get(STORAGE_KEY_PAYMENTS, state.paymentCommitments);
 }
 function savePaymentsToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_PAYMENTS, JSON.stringify(state.paymentCommitments)); } catch(e){}
+  Store.set(STORAGE_KEY_PAYMENTS, state.paymentCommitments);
 }
 function addPaymentDate(catId){
   var dateEl = document.getElementById('payDate_' + catId);
@@ -912,10 +889,10 @@ function requestNotificationPermission(){
   });
 }
 function loadNotifiedLog(){
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY_NOTIFIED) || '{}'); } catch(e){ return {}; }
+  return Store.get(STORAGE_KEY_NOTIFIED, {});
 }
 function saveNotifiedLog(log){
-  try { localStorage.setItem(STORAGE_KEY_NOTIFIED, JSON.stringify(log)); } catch(e){}
+  Store.set(STORAGE_KEY_NOTIFIED, log);
 }
 function checkAndNotifyPayments(force){
   if (getNotificationStatus() !== 'granted') return;
@@ -1135,7 +1112,7 @@ function restoreFromDrive(){
     rebuildCategoryLists();
     saveData();
     saveBudgetsToStorage();
-    try { localStorage.setItem(STORAGE_KEY_BALANCE, JSON.stringify(state.initialBalance)); } catch(e){}
+    Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
     savePaymentsToStorage();
     saveCustomCategoriesToStorage();
     saveSavingsToStorage();
@@ -1415,14 +1392,10 @@ function tryEndpoint(i){
 }
 
 function loadCachedHistory(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_HISTORY);
-    if (raw) state.bcvHistory = JSON.parse(raw);
-  } catch(e){ console.error('history cache load error', e); }
+  state.bcvHistory = Store.get(STORAGE_KEY_HISTORY, state.bcvHistory);
 }
 function saveCachedHistory(){
-  try { localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(state.bcvHistory)); }
-  catch(e){ console.error('history cache save error', e); }
+  Store.set(STORAGE_KEY_HISTORY, state.bcvHistory);
 }
 function fetchBcvHistory(){
   state.historyStatus = 'loading';
@@ -1948,22 +1921,16 @@ function saveGoal(period, usd, ves){
   pushToCloud();
 }
 function loadSavings(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_SAVINGS);
-    if (raw) state.currentSavings = JSON.parse(raw);
-  } catch(e){ console.error('savings load error', e); }
+  state.currentSavings = Store.get(STORAGE_KEY_SAVINGS, state.currentSavings);
 }
 function saveSavingsToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_SAVINGS, JSON.stringify(state.currentSavings)); } catch(e){}
+  Store.set(STORAGE_KEY_SAVINGS, state.currentSavings);
 }
 function loadSavingsStart(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_SAVINGS_START);
-    if (raw) state.savingsStart = JSON.parse(raw);
-  } catch(e){ console.error('savings start load error', e); }
+  state.savingsStart = Store.get(STORAGE_KEY_SAVINGS_START, state.savingsStart);
 }
 function saveSavingsStartToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_SAVINGS_START, JSON.stringify(state.savingsStart)); } catch(e){}
+  Store.set(STORAGE_KEY_SAVINGS_START, state.savingsStart);
 }
 /* ---------- icons (inline svg, minimal set) ---------- */
 var ICONS = {
