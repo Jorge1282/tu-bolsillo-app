@@ -360,7 +360,6 @@ var state = {
   goal: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 }, daily: { usd: 0, ves: 0 } },
   currentSavings: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 } },
   savingsStart: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 } },
-  metasView: 'mensual',
   metasScreen: 'home',
   ajustesScreen: 'home',
   view: 'resumen',
@@ -1957,12 +1956,6 @@ function loadSavings(){
 function saveSavingsToStorage(){
   try { localStorage.setItem(STORAGE_KEY_SAVINGS, JSON.stringify(state.currentSavings)); } catch(e){}
 }
-function saveSavings(period, usd, ves){
-  state.currentSavings[period] = { usd: Number(usd)||0, ves: Number(ves)||0 };
-  saveSavingsToStorage();
-  render();
-  pushToCloud();
-}
 function loadSavingsStart(){
   try {
     var raw = localStorage.getItem(STORAGE_KEY_SAVINGS_START);
@@ -1972,13 +1965,6 @@ function loadSavingsStart(){
 function saveSavingsStartToStorage(){
   try { localStorage.setItem(STORAGE_KEY_SAVINGS_START, JSON.stringify(state.savingsStart)); } catch(e){}
 }
-function saveSavingsStart(period, usd, ves){
-  state.savingsStart[period] = { usd: Number(usd)||0, ves: Number(ves)||0 };
-  saveSavingsStartToStorage();
-  render();
-  pushToCloud();
-}
-function setMetasView(v){ state.metasView = v; render(); }
 /* ---------- icons (inline svg, minimal set) ---------- */
 var ICONS = {
   wallet: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>',
@@ -2709,101 +2695,6 @@ function renderBudgetVsIncomeCard(){
     html += '  <div class="goal-numbers">' + fmt(sumVes,'VES') + ' presupuestado de ' + fmt(goal.ves,'VES') + ' de ingreso esperado' + (pctV>100?' · Excede tu ingreso planeado':'') + '</div>';
     html += '</div>';
   }
-  return html;
-}
-
-function renderMetasSemanal(monthTx){
-  var g = state.goal.weekly;
-  var s = state.currentSavings.weekly;
-  var st = state.savingsStart.weekly;
-  var totalTargetUSD = st.usd + g.usd;
-  var totalTargetVES = st.ves + g.ves;
-  var weeks = groupTxByWeek(monthTx);
-  var todayMonday = mondayOf(todayStr());
-  var currentWeek = weeks.find(function(w){ return w.start === todayMonday; });
-  var currentWeekLabel = currentWeek ? (formatDayMonthShort(currentWeek.start) + '–' + formatDayMonthShort(currentWeek.end)) : (formatDayMonthShort(todayMonday) + '–' + formatDayMonthShort(addDaysStr(todayMonday,6)));
-  var otherWeeks = weeks.filter(function(w){ return w.start !== todayMonday; });
-
-  var html = '<div class="section-label">Esta semana (' + currentWeekLabel + ')</div>';
-  html += renderGoalRingCard('Ahorro Actual (USD)', s.usd, totalTargetUSD, 'USD', st.usd, g.usd);
-  html += renderGoalRingCard('Ahorro Actual (Bs.)', s.ves, totalTargetVES, 'VES', st.ves, g.ves);
-  html += renderAhorroForm('weekly');
-
-  html += '<div class="section-label" style="margin-top:22px">Semanas anteriores (ingresos − egresos)</div>';
-  if (otherWeeks.length === 0){
-    html += '<div class="empty-note" style="padding-top:0">No hay más semanas registradas este mes.</div>';
-  } else {
-    otherWeeks.forEach(function(w){
-      var label = 'Semana ' + formatDayMonthShort(w.start) + ' – ' + formatDayMonthShort(w.end);
-      var cumplioUSD = g.usd > 0 ? w.netUSD >= g.usd : null;
-      var cumplioVES = g.ves > 0 ? w.netVES >= g.ves : null;
-      html += '<div class="goal-card">';
-      html += '  <div class="goal-row"><span>' + esc(label) + '</span></div>';
-      if (g.usd > 0){
-        var pu = Math.min(100, Math.max(0, Math.round((w.netUSD/g.usd)*100)));
-        html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + pu + '%"></div></div>';
-        html += '  <div class="goal-numbers">' + fmt(w.netUSD,'USD') + ' de ' + fmt(g.usd,'USD') + (cumplioUSD!==null ? (cumplioUSD?' · Cumplió':' · No cumplió') : '') + '</div>';
-      }
-      if (g.ves > 0){
-        var pv = Math.min(100, Math.max(0, Math.round((w.netVES/g.ves)*100)));
-        html += '  <div class="bar-track" style="margin-top:6px"><div class="bar-fill-gold" style="width:' + pv + '%"></div></div>';
-        html += '  <div class="goal-numbers">' + fmt(w.netVES,'VES') + ' de ' + fmt(g.ves,'VES') + (cumplioVES!==null ? (cumplioVES?' · Cumplió':' · No cumplió') : '') + '</div>';
-      }
-      if (g.usd === 0 && g.ves === 0){
-        html += '  <div class="goal-numbers">Neto: ' + fmt(w.netUSD,'USD') + ' / ' + fmt(w.netVES,'VES') + '</div>';
-      }
-      html += '</div>';
-    });
-  }
-  return html;
-}
-
-function renderMetasDiario(){
-  var g = state.goal.daily;
-  var rows = getDailyBalances();
-  var weeks = groupDayRowsByWeek(rows, 'metasdia-').slice().reverse();
-
-  var html = '<div class="section-label">Ahorro por día</div>';
-  if (g.usd === 0 && g.ves === 0){
-    html += '<div class="empty-note">Define una meta diaria abajo para ver qué días cumpliste.</div>';
-  }
-
-  weeks.forEach(function(w, wi){
-    var label = 'Semana ' + formatDayMonthShort(w.start) + ' – ' + formatDayMonthShort(w.end);
-    var expanded = isGroupExpanded(w.key, wi);
-    html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + w.key + '\',' + wi + ')">';
-    html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(label) + '</span></span>';
-    html += '  <span class="group-net">';
-    if (w.netUSD !== 0) html += '<span style="color:' + (w.netUSD>=0?'var(--teal)':'var(--coral)') + '">' + (w.netUSD>=0?'+':'') + fmt(w.netUSD,'USD') + '</span> ';
-    if (w.netVES !== 0) html += '<span style="color:' + (w.netVES>=0?'var(--teal)':'var(--coral)') + '">' + (w.netVES>=0?'+':'') + fmt(w.netVES,'VES') + '</span>';
-    html += '</span></button>';
-
-    if (!expanded) return;
-
-    html += '<div class="ledger-list" style="margin-bottom:20px">';
-    w.rows.slice().reverse().forEach(function(r){
-      var cumplioUSD = g.usd > 0 ? r.netUSD >= g.usd : null;
-      var cumplioVES = g.ves > 0 ? r.netVES >= g.ves : null;
-      var cumplio = (cumplioUSD===null && cumplioVES===null) ? null : ((cumplioUSD!==false) && (cumplioVES!==false));
-      html += '<div class="day-row">';
-      html += '  <div class="day-num">' + pad2(r.day) + '</div>';
-      html += '  <div class="day-mid">';
-      html += '    <div class="day-net" style="color:' + (r.netUSD>=0?'var(--teal)':'var(--coral)') + '">' + (r.netUSD>=0?'+':'') + fmt(r.netUSD,'USD') + '</div>';
-      html += '    <div class="day-net" style="color:' + (r.netVES>=0?'var(--teal)':'var(--coral)') + '">' + (r.netVES>=0?'+':'') + fmt(r.netVES,'VES') + '</div>';
-      html += '  </div>';
-      if (cumplio !== null){
-        html += '  <div style="color:' + (cumplio?'var(--teal)':'var(--coral)') + ';font-size:11px;font-family:var(--font-mono);font-weight:700">' + (cumplio?'Cumplió':'No cumplió') + '</div>';
-      }
-      html += '</div>';
-    });
-    html += '</div>';
-  });
-
-  html += '<div class="section-label" style="margin-top:20px">Ajustar meta diaria</div>';
-  html += '<div class="empty-note" style="padding-top:0">Cuánto quieres ahorrar (neto) cada día.</div>';
-  html += '<div class="form-group"><label class="form-label">Meta diaria en USD</label><input class="input" type="number" inputmode="decimal" id="goalDayUsdInput" value="' + g.usd + '"></div>';
-  html += '<div class="form-group"><label class="form-label">Meta diaria en Bs.</label><input class="input" type="number" inputmode="decimal" id="goalDayVesInput" value="' + g.ves + '"></div>';
-  html += '<button class="primary-btn" onclick="saveGoal(\'daily\', document.getElementById(\'goalDayUsdInput\').value, document.getElementById(\'goalDayVesInput\').value)">Guardar meta diaria</button>';
   return html;
 }
 
