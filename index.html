@@ -1366,29 +1366,32 @@ function fetchWithTimeout(url, ms){
   return Promise.race([ fetch(url, { cache: 'no-cache' }), timeoutPromise ]);
 }
 
+function fetchWithFailover(endpoints, timeoutMs, onSuccess, onExhausted){
+  function tryIndex(i){
+    if (i >= endpoints.length){ onExhausted(); return; }
+    fetchWithTimeout(endpoints[i], timeoutMs)
+      .then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+      .then(onSuccess)
+      .catch(function(err){
+        console.error('fetch failover error (' + endpoints[i] + ')', err);
+        tryIndex(i + 1);
+      });
+  }
+  tryIndex(0);
+}
+
 function fetchBcvRate(){
   state.rateStatus = 'loading';
   render();
-  tryEndpoint(0);
-}
-function tryEndpoint(i){
-  if (i >= BCV_ENDPOINTS.length){
+  fetchWithFailover(BCV_ENDPOINTS, 8000, function(data){
+    state.bcvRate = { usd: data.USD, date: data.effective_date || data.date, updatedAt: data.updated_at };
+    state.rateStatus = 'ok';
+    saveCachedRate();
+    render();
+  }, function(){
     state.rateStatus = 'error';
     render();
-    return;
-  }
-  fetchWithTimeout(BCV_ENDPOINTS[i], 8000)
-    .then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-    .then(function(data){
-      state.bcvRate = { usd: data.USD, date: data.effective_date || data.date, updatedAt: data.updated_at };
-      state.rateStatus = 'ok';
-      saveCachedRate();
-      render();
-    })
-    .catch(function(err){
-      console.error('BCV fetch error (' + BCV_ENDPOINTS[i] + ')', err);
-      tryEndpoint(i + 1);
-    });
+  });
 }
 
 function loadCachedHistory(){
@@ -1399,30 +1402,19 @@ function saveCachedHistory(){
 }
 function fetchBcvHistory(){
   state.historyStatus = 'loading';
-  tryHistoryEndpoint(0);
-}
-function tryHistoryEndpoint(i){
-  if (i >= HISTORY_ENDPOINTS.length){
+  fetchWithFailover(HISTORY_ENDPOINTS, 12000, function(data){
+    var list = Array.isArray(data) ? data : (data.history || data.data || []);
+    list.forEach(function(entry){
+      var key = entry.effective_date || entry.date;
+      if (key && typeof entry.USD === 'number') state.bcvHistory[key] = entry.USD;
+    });
+    state.historyStatus = 'ok';
+    saveCachedHistory();
+    render();
+  }, function(){
     state.historyStatus = 'error';
     render();
-    return;
-  }
-  fetchWithTimeout(HISTORY_ENDPOINTS[i], 12000)
-    .then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-    .then(function(data){
-      var list = Array.isArray(data) ? data : (data.history || data.data || []);
-      list.forEach(function(entry){
-        var key = entry.effective_date || entry.date;
-        if (key && typeof entry.USD === 'number') state.bcvHistory[key] = entry.USD;
-      });
-      state.historyStatus = 'ok';
-      saveCachedHistory();
-      render();
-    })
-    .catch(function(err){
-      console.error('BCV history fetch error (' + HISTORY_ENDPOINTS[i] + ')', err);
-      tryHistoryEndpoint(i + 1);
-    });
+  });
 }
 function addDaysStr(dateStr, delta){
   var d = new Date(dateStr + 'T00:00:00');
