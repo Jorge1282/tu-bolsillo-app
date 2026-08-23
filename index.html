@@ -345,6 +345,20 @@ var HISTORY_ENDPOINTS = [
   'https://cdn.jsdelivr.net/gh/grupoclip/bcv-api/api/v1/history.json'
 ];
 
+/* ---------- persistencia local (helper genérico sobre localStorage) ---------- */
+var Store = {
+  get: function(key, fallback){
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch(e){ console.error('Store.get error (' + key + ')', e); return fallback; }
+  },
+  set: function(key, value){
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+    catch(e){ console.error('Store.set error (' + key + ')', e); return false; }
+  }
+};
+
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function uid(){ return Date.now()+'-'+Math.random().toString(36).slice(2,8); }
 function monthKeyOf(d){ return d.slice(0,7); }
@@ -360,7 +374,6 @@ var state = {
   goal: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 }, daily: { usd: 0, ves: 0 } },
   currentSavings: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 } },
   savingsStart: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 } },
-  metasView: 'mensual',
   metasScreen: 'home',
   ajustesScreen: 'home',
   view: 'resumen',
@@ -405,14 +418,11 @@ var state = {
 };
 
 function loadData(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY);
-    if (raw){
-      var parsed = JSON.parse(raw);
-      state.transactions = parsed.transactions || [];
-      state.goal = normalizeGoal(parsed.goal);
-    }
-  } catch(e){ console.error('load error', e); }
+  var parsed = Store.get(STORAGE_KEY, null);
+  if (parsed){
+    state.transactions = parsed.transactions || [];
+    state.goal = normalizeGoal(parsed.goal);
+  }
 }
 function normalizeGoal(g){
   if (!g) return { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0}, daily: {usd:0,ves:0} };
@@ -427,34 +437,20 @@ function normalizeGoal(g){
   return { monthly: { usd: g.usd||0, ves: g.ves||0 }, weekly: {usd:0,ves:0}, daily: {usd:0,ves:0} };
 }
 function saveData(){
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions: state.transactions, goal: state.goal }));
-    state.saveError = false;
-  } catch(e){
-    console.error('save error', e);
-    state.saveError = true;
-  }
+  state.saveError = !Store.set(STORAGE_KEY, { transactions: state.transactions, goal: state.goal });
 }
 function loadCachedRate(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_RATE);
-    if (raw) state.bcvRate = JSON.parse(raw);
-  } catch(e){ console.error('rate cache load error', e); }
+  state.bcvRate = Store.get(STORAGE_KEY_RATE, state.bcvRate);
 }
 function saveCachedRate(){
-  try { localStorage.setItem(STORAGE_KEY_RATE, JSON.stringify(state.bcvRate)); }
-  catch(e){ console.error('rate cache save error', e); }
+  Store.set(STORAGE_KEY_RATE, state.bcvRate);
 }
 function loadInitialBalance(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_BALANCE);
-    if (raw) state.initialBalance = JSON.parse(raw);
-  } catch(e){ console.error('balance load error', e); }
+  state.initialBalance = Store.get(STORAGE_KEY_BALANCE, state.initialBalance);
 }
 function saveInitialBalance(usd, ves){
   state.initialBalance = { usd: Number(usd)||0, ves: Number(ves)||0 };
-  try { localStorage.setItem(STORAGE_KEY_BALANCE, JSON.stringify(state.initialBalance)); }
-  catch(e){ console.error('balance save error', e); }
+  Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
   render();
   pushToCloud();
 }
@@ -481,13 +477,10 @@ function parseActivationCode(raw){
   return { plan: plan, serial: serial, days: PRO_PLAN_DAYS[plan] };
 }
 function loadPro(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_PRO);
-    if (raw) state.pro = JSON.parse(raw);
-  } catch(e){ console.error('pro load error', e); }
+  state.pro = Store.get(STORAGE_KEY_PRO, state.pro);
 }
 function saveProToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_PRO, JSON.stringify(state.pro)); } catch(e){}
+  Store.set(STORAGE_KEY_PRO, state.pro);
 }
 function isProActive(){
   if (!state.pro || !state.pro.active) return false;
@@ -615,22 +608,19 @@ function renderProGate(featureName){
 }
 
 function loadAuth(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_AUTH);
-    if (raw){
-      var parsed = JSON.parse(raw);
-      state.authUsername = parsed.username || '';
-      state.authPassHash = parsed.passHash || '';
-      state.authRecoveryHash = parsed.recoveryHash || '';
-      state.authMode = 'login';
-    } else {
-      state.authMode = 'setup';
-    }
-  } catch(e){ console.error('auth load error', e); state.authMode = 'setup'; }
+  var parsed = Store.get(STORAGE_KEY_AUTH, null);
+  if (parsed){
+    state.authUsername = parsed.username || '';
+    state.authPassHash = parsed.passHash || '';
+    state.authRecoveryHash = parsed.recoveryHash || '';
+    state.authMode = 'login';
+  } else {
+    state.authMode = 'setup';
+  }
   state.locked = true;
 }
 function persistAuth(){
-  try { localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify({ username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash })); } catch(e){}
+  Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash });
 }
 function generateRecoveryCode(){
   var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; /* sin 0/O ni 1/I/L, para que no se confundan al copiar a mano */
@@ -753,29 +743,21 @@ function regenerateRecoveryCode(){
 
 /* ---------- categorías personalizadas ---------- */
 function loadCustomCategories(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_CATEGORIES);
-    if (raw){
-      var parsed = JSON.parse(raw);
-      state.customCategories = { expense: parsed.expense || [], income: parsed.income || [] };
-    }
-  } catch(e){ console.error('custom categories load error', e); }
+  var parsed = Store.get(STORAGE_KEY_CATEGORIES, null);
+  if (parsed) state.customCategories = { expense: parsed.expense || [], income: parsed.income || [] };
   rebuildCategoryLists();
 }
 function saveCustomCategoriesToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(state.customCategories)); } catch(e){}
+  Store.set(STORAGE_KEY_CATEGORIES, state.customCategories);
 }
 
 /* ---------- presupuestos por categoría ---------- */
 /* ---------- ingreso mensual (meta) ---------- */
 function loadFamilyIncomeGoal(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_INCOME_GOAL);
-    if (raw) state.familyIncomeGoal = JSON.parse(raw);
-  } catch(e){ console.error('income goal load error', e); }
+  state.familyIncomeGoal = Store.get(STORAGE_KEY_INCOME_GOAL, state.familyIncomeGoal);
 }
 function saveFamilyIncomeGoalToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_INCOME_GOAL, JSON.stringify(state.familyIncomeGoal)); } catch(e){}
+  Store.set(STORAGE_KEY_INCOME_GOAL, state.familyIncomeGoal);
 }
 function saveFamilyIncomeGoal(){
   var usd = document.getElementById('incomeGoalUsd').value;
@@ -787,13 +769,10 @@ function saveFamilyIncomeGoal(){
 }
 
 function loadBudgets(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_BUDGETS);
-    if (raw) state.budgets = JSON.parse(raw);
-  } catch(e){ console.error('budgets load error', e); }
+  state.budgets = Store.get(STORAGE_KEY_BUDGETS, state.budgets);
 }
 function saveBudgetsToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_BUDGETS, JSON.stringify(state.budgets)); } catch(e){}
+  Store.set(STORAGE_KEY_BUDGETS, state.budgets);
 }
 function saveBudgets(){
   var budgets = {};
@@ -819,13 +798,10 @@ function budgetEquivalentInline(amount, currency){
 
 /* ---------- compromisos de pago ---------- */
 function loadPayments(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_PAYMENTS);
-    if (raw) state.paymentCommitments = JSON.parse(raw);
-  } catch(e){ console.error('payments load error', e); }
+  state.paymentCommitments = Store.get(STORAGE_KEY_PAYMENTS, state.paymentCommitments);
 }
 function savePaymentsToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_PAYMENTS, JSON.stringify(state.paymentCommitments)); } catch(e){}
+  Store.set(STORAGE_KEY_PAYMENTS, state.paymentCommitments);
 }
 function addPaymentDate(catId){
   var dateEl = document.getElementById('payDate_' + catId);
@@ -913,10 +889,10 @@ function requestNotificationPermission(){
   });
 }
 function loadNotifiedLog(){
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY_NOTIFIED) || '{}'); } catch(e){ return {}; }
+  return Store.get(STORAGE_KEY_NOTIFIED, {});
 }
 function saveNotifiedLog(log){
-  try { localStorage.setItem(STORAGE_KEY_NOTIFIED, JSON.stringify(log)); } catch(e){}
+  Store.set(STORAGE_KEY_NOTIFIED, log);
 }
 function checkAndNotifyPayments(force){
   if (getNotificationStatus() !== 'granted') return;
@@ -1136,7 +1112,7 @@ function restoreFromDrive(){
     rebuildCategoryLists();
     saveData();
     saveBudgetsToStorage();
-    try { localStorage.setItem(STORAGE_KEY_BALANCE, JSON.stringify(state.initialBalance)); } catch(e){}
+    Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
     savePaymentsToStorage();
     saveCustomCategoriesToStorage();
     saveSavingsToStorage();
@@ -1390,67 +1366,55 @@ function fetchWithTimeout(url, ms){
   return Promise.race([ fetch(url, { cache: 'no-cache' }), timeoutPromise ]);
 }
 
+function fetchWithFailover(endpoints, timeoutMs, onSuccess, onExhausted){
+  function tryIndex(i){
+    if (i >= endpoints.length){ onExhausted(); return; }
+    fetchWithTimeout(endpoints[i], timeoutMs)
+      .then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+      .then(onSuccess)
+      .catch(function(err){
+        console.error('fetch failover error (' + endpoints[i] + ')', err);
+        tryIndex(i + 1);
+      });
+  }
+  tryIndex(0);
+}
+
 function fetchBcvRate(){
   state.rateStatus = 'loading';
   render();
-  tryEndpoint(0);
-}
-function tryEndpoint(i){
-  if (i >= BCV_ENDPOINTS.length){
+  fetchWithFailover(BCV_ENDPOINTS, 8000, function(data){
+    state.bcvRate = { usd: data.USD, date: data.effective_date || data.date, updatedAt: data.updated_at };
+    state.rateStatus = 'ok';
+    saveCachedRate();
+    render();
+  }, function(){
     state.rateStatus = 'error';
     render();
-    return;
-  }
-  fetchWithTimeout(BCV_ENDPOINTS[i], 8000)
-    .then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-    .then(function(data){
-      state.bcvRate = { usd: data.USD, date: data.effective_date || data.date, updatedAt: data.updated_at };
-      state.rateStatus = 'ok';
-      saveCachedRate();
-      render();
-    })
-    .catch(function(err){
-      console.error('BCV fetch error (' + BCV_ENDPOINTS[i] + ')', err);
-      tryEndpoint(i + 1);
-    });
+  });
 }
 
 function loadCachedHistory(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_HISTORY);
-    if (raw) state.bcvHistory = JSON.parse(raw);
-  } catch(e){ console.error('history cache load error', e); }
+  state.bcvHistory = Store.get(STORAGE_KEY_HISTORY, state.bcvHistory);
 }
 function saveCachedHistory(){
-  try { localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(state.bcvHistory)); }
-  catch(e){ console.error('history cache save error', e); }
+  Store.set(STORAGE_KEY_HISTORY, state.bcvHistory);
 }
 function fetchBcvHistory(){
   state.historyStatus = 'loading';
-  tryHistoryEndpoint(0);
-}
-function tryHistoryEndpoint(i){
-  if (i >= HISTORY_ENDPOINTS.length){
+  fetchWithFailover(HISTORY_ENDPOINTS, 12000, function(data){
+    var list = Array.isArray(data) ? data : (data.history || data.data || []);
+    list.forEach(function(entry){
+      var key = entry.effective_date || entry.date;
+      if (key && typeof entry.USD === 'number') state.bcvHistory[key] = entry.USD;
+    });
+    state.historyStatus = 'ok';
+    saveCachedHistory();
+    render();
+  }, function(){
     state.historyStatus = 'error';
     render();
-    return;
-  }
-  fetchWithTimeout(HISTORY_ENDPOINTS[i], 12000)
-    .then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-    .then(function(data){
-      var list = Array.isArray(data) ? data : (data.history || data.data || []);
-      list.forEach(function(entry){
-        var key = entry.effective_date || entry.date;
-        if (key && typeof entry.USD === 'number') state.bcvHistory[key] = entry.USD;
-      });
-      state.historyStatus = 'ok';
-      saveCachedHistory();
-      render();
-    })
-    .catch(function(err){
-      console.error('BCV history fetch error (' + HISTORY_ENDPOINTS[i] + ')', err);
-      tryHistoryEndpoint(i + 1);
-    });
+  });
 }
 function addDaysStr(dateStr, delta){
   var d = new Date(dateStr + 'T00:00:00');
@@ -1949,36 +1913,17 @@ function saveGoal(period, usd, ves){
   pushToCloud();
 }
 function loadSavings(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_SAVINGS);
-    if (raw) state.currentSavings = JSON.parse(raw);
-  } catch(e){ console.error('savings load error', e); }
+  state.currentSavings = Store.get(STORAGE_KEY_SAVINGS, state.currentSavings);
 }
 function saveSavingsToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_SAVINGS, JSON.stringify(state.currentSavings)); } catch(e){}
-}
-function saveSavings(period, usd, ves){
-  state.currentSavings[period] = { usd: Number(usd)||0, ves: Number(ves)||0 };
-  saveSavingsToStorage();
-  render();
-  pushToCloud();
+  Store.set(STORAGE_KEY_SAVINGS, state.currentSavings);
 }
 function loadSavingsStart(){
-  try {
-    var raw = localStorage.getItem(STORAGE_KEY_SAVINGS_START);
-    if (raw) state.savingsStart = JSON.parse(raw);
-  } catch(e){ console.error('savings start load error', e); }
+  state.savingsStart = Store.get(STORAGE_KEY_SAVINGS_START, state.savingsStart);
 }
 function saveSavingsStartToStorage(){
-  try { localStorage.setItem(STORAGE_KEY_SAVINGS_START, JSON.stringify(state.savingsStart)); } catch(e){}
+  Store.set(STORAGE_KEY_SAVINGS_START, state.savingsStart);
 }
-function saveSavingsStart(period, usd, ves){
-  state.savingsStart[period] = { usd: Number(usd)||0, ves: Number(ves)||0 };
-  saveSavingsStartToStorage();
-  render();
-  pushToCloud();
-}
-function setMetasView(v){ state.metasView = v; render(); }
 /* ---------- icons (inline svg, minimal set) ---------- */
 var ICONS = {
   wallet: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>',
@@ -2709,101 +2654,6 @@ function renderBudgetVsIncomeCard(){
     html += '  <div class="goal-numbers">' + fmt(sumVes,'VES') + ' presupuestado de ' + fmt(goal.ves,'VES') + ' de ingreso esperado' + (pctV>100?' · Excede tu ingreso planeado':'') + '</div>';
     html += '</div>';
   }
-  return html;
-}
-
-function renderMetasSemanal(monthTx){
-  var g = state.goal.weekly;
-  var s = state.currentSavings.weekly;
-  var st = state.savingsStart.weekly;
-  var totalTargetUSD = st.usd + g.usd;
-  var totalTargetVES = st.ves + g.ves;
-  var weeks = groupTxByWeek(monthTx);
-  var todayMonday = mondayOf(todayStr());
-  var currentWeek = weeks.find(function(w){ return w.start === todayMonday; });
-  var currentWeekLabel = currentWeek ? (formatDayMonthShort(currentWeek.start) + '–' + formatDayMonthShort(currentWeek.end)) : (formatDayMonthShort(todayMonday) + '–' + formatDayMonthShort(addDaysStr(todayMonday,6)));
-  var otherWeeks = weeks.filter(function(w){ return w.start !== todayMonday; });
-
-  var html = '<div class="section-label">Esta semana (' + currentWeekLabel + ')</div>';
-  html += renderGoalRingCard('Ahorro Actual (USD)', s.usd, totalTargetUSD, 'USD', st.usd, g.usd);
-  html += renderGoalRingCard('Ahorro Actual (Bs.)', s.ves, totalTargetVES, 'VES', st.ves, g.ves);
-  html += renderAhorroForm('weekly');
-
-  html += '<div class="section-label" style="margin-top:22px">Semanas anteriores (ingresos − egresos)</div>';
-  if (otherWeeks.length === 0){
-    html += '<div class="empty-note" style="padding-top:0">No hay más semanas registradas este mes.</div>';
-  } else {
-    otherWeeks.forEach(function(w){
-      var label = 'Semana ' + formatDayMonthShort(w.start) + ' – ' + formatDayMonthShort(w.end);
-      var cumplioUSD = g.usd > 0 ? w.netUSD >= g.usd : null;
-      var cumplioVES = g.ves > 0 ? w.netVES >= g.ves : null;
-      html += '<div class="goal-card">';
-      html += '  <div class="goal-row"><span>' + esc(label) + '</span></div>';
-      if (g.usd > 0){
-        var pu = Math.min(100, Math.max(0, Math.round((w.netUSD/g.usd)*100)));
-        html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + pu + '%"></div></div>';
-        html += '  <div class="goal-numbers">' + fmt(w.netUSD,'USD') + ' de ' + fmt(g.usd,'USD') + (cumplioUSD!==null ? (cumplioUSD?' · Cumplió':' · No cumplió') : '') + '</div>';
-      }
-      if (g.ves > 0){
-        var pv = Math.min(100, Math.max(0, Math.round((w.netVES/g.ves)*100)));
-        html += '  <div class="bar-track" style="margin-top:6px"><div class="bar-fill-gold" style="width:' + pv + '%"></div></div>';
-        html += '  <div class="goal-numbers">' + fmt(w.netVES,'VES') + ' de ' + fmt(g.ves,'VES') + (cumplioVES!==null ? (cumplioVES?' · Cumplió':' · No cumplió') : '') + '</div>';
-      }
-      if (g.usd === 0 && g.ves === 0){
-        html += '  <div class="goal-numbers">Neto: ' + fmt(w.netUSD,'USD') + ' / ' + fmt(w.netVES,'VES') + '</div>';
-      }
-      html += '</div>';
-    });
-  }
-  return html;
-}
-
-function renderMetasDiario(){
-  var g = state.goal.daily;
-  var rows = getDailyBalances();
-  var weeks = groupDayRowsByWeek(rows, 'metasdia-').slice().reverse();
-
-  var html = '<div class="section-label">Ahorro por día</div>';
-  if (g.usd === 0 && g.ves === 0){
-    html += '<div class="empty-note">Define una meta diaria abajo para ver qué días cumpliste.</div>';
-  }
-
-  weeks.forEach(function(w, wi){
-    var label = 'Semana ' + formatDayMonthShort(w.start) + ' – ' + formatDayMonthShort(w.end);
-    var expanded = isGroupExpanded(w.key, wi);
-    html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + w.key + '\',' + wi + ')">';
-    html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(label) + '</span></span>';
-    html += '  <span class="group-net">';
-    if (w.netUSD !== 0) html += '<span style="color:' + (w.netUSD>=0?'var(--teal)':'var(--coral)') + '">' + (w.netUSD>=0?'+':'') + fmt(w.netUSD,'USD') + '</span> ';
-    if (w.netVES !== 0) html += '<span style="color:' + (w.netVES>=0?'var(--teal)':'var(--coral)') + '">' + (w.netVES>=0?'+':'') + fmt(w.netVES,'VES') + '</span>';
-    html += '</span></button>';
-
-    if (!expanded) return;
-
-    html += '<div class="ledger-list" style="margin-bottom:20px">';
-    w.rows.slice().reverse().forEach(function(r){
-      var cumplioUSD = g.usd > 0 ? r.netUSD >= g.usd : null;
-      var cumplioVES = g.ves > 0 ? r.netVES >= g.ves : null;
-      var cumplio = (cumplioUSD===null && cumplioVES===null) ? null : ((cumplioUSD!==false) && (cumplioVES!==false));
-      html += '<div class="day-row">';
-      html += '  <div class="day-num">' + pad2(r.day) + '</div>';
-      html += '  <div class="day-mid">';
-      html += '    <div class="day-net" style="color:' + (r.netUSD>=0?'var(--teal)':'var(--coral)') + '">' + (r.netUSD>=0?'+':'') + fmt(r.netUSD,'USD') + '</div>';
-      html += '    <div class="day-net" style="color:' + (r.netVES>=0?'var(--teal)':'var(--coral)') + '">' + (r.netVES>=0?'+':'') + fmt(r.netVES,'VES') + '</div>';
-      html += '  </div>';
-      if (cumplio !== null){
-        html += '  <div style="color:' + (cumplio?'var(--teal)':'var(--coral)') + ';font-size:11px;font-family:var(--font-mono);font-weight:700">' + (cumplio?'Cumplió':'No cumplió') + '</div>';
-      }
-      html += '</div>';
-    });
-    html += '</div>';
-  });
-
-  html += '<div class="section-label" style="margin-top:20px">Ajustar meta diaria</div>';
-  html += '<div class="empty-note" style="padding-top:0">Cuánto quieres ahorrar (neto) cada día.</div>';
-  html += '<div class="form-group"><label class="form-label">Meta diaria en USD</label><input class="input" type="number" inputmode="decimal" id="goalDayUsdInput" value="' + g.usd + '"></div>';
-  html += '<div class="form-group"><label class="form-label">Meta diaria en Bs.</label><input class="input" type="number" inputmode="decimal" id="goalDayVesInput" value="' + g.ves + '"></div>';
-  html += '<button class="primary-btn" onclick="saveGoal(\'daily\', document.getElementById(\'goalDayUsdInput\').value, document.getElementById(\'goalDayVesInput\').value)">Guardar meta diaria</button>';
   return html;
 }
 
