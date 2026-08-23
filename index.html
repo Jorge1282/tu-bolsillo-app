@@ -1951,6 +1951,23 @@ var ICONS = {
 /* ---------- render ---------- */
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+/* ---------- helpers de color (evitan repetir el mismo ternario en cada render*) ---------- */
+function deltaColor(positive){
+  return positive ? 'var(--teal)' : 'var(--coral)';
+}
+function pctBadgeColor(pct, threshold, overColor, underColor){
+  return pct > threshold ? overColor : underColor;
+}
+function dueUrgencyColor(diffDays){
+  return diffDays < 0 ? '#ff5c5c' : (diffDays <= 2 ? '#E0A94E' : 'var(--text-dim)');
+}
+function dueUrgencyText(diffDays){
+  if (diffDays < 0) return 'Venció hace ' + Math.abs(diffDays) + ' día' + (Math.abs(diffDays)===1?'':'s');
+  if (diffDays === 0) return 'Vence hoy';
+  if (diffDays === 1) return 'Vence mañana';
+  return 'Vence en ' + diffDays + ' días';
+}
+
 function renderAuthScreen(){
   var html = '<div class="lock-screen">';
   html += '  <div class="lock-icon" style="color:var(--gold)">' + ICONS.wallet2 + '</div>';
@@ -2115,11 +2132,8 @@ function renderPaymentAlerts(){
   groups.forEach(function(g, gi){
     var key = 'resumenpago-' + g.catId;
     var expanded = isGroupExpanded(key, gi);
-    var color = g.minDiff < 0 ? '#ff5c5c' : (g.minDiff <= 2 ? '#E0A94E' : 'var(--text-dim)');
-    var headerText = g.minDiff < 0 ? ('Venció hace ' + Math.abs(g.minDiff) + ' día' + (Math.abs(g.minDiff)===1?'':'s'))
-      : g.minDiff === 0 ? 'Vence hoy'
-      : g.minDiff === 1 ? 'Vence mañana'
-      : ('Vence en ' + g.minDiff + ' días');
+    var color = dueUrgencyColor(g.minDiff);
+    var headerText = dueUrgencyText(g.minDiff);
 
     html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + key + '\',' + gi + ')">';
     html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(g.label) + '</span></span>';
@@ -2129,11 +2143,8 @@ function renderPaymentAlerts(){
     if (expanded){
       html += '<div class="ledger-list" style="margin-bottom:18px">';
       g.items.sort(function(a,b){ return a.diffDays - b.diffDays; }).forEach(function(p){
-        var pColor = p.diffDays < 0 ? '#ff5c5c' : (p.diffDays <= 2 ? '#E0A94E' : 'var(--text-dim)');
-        var pText = p.diffDays < 0 ? ('Venció hace ' + Math.abs(p.diffDays) + ' día' + (Math.abs(p.diffDays)===1?'':'s'))
-          : p.diffDays === 0 ? 'Vence hoy'
-          : p.diffDays === 1 ? 'Vence mañana'
-          : ('Vence en ' + p.diffDays + ' días');
+        var pColor = dueUrgencyColor(p.diffDays);
+        var pText = dueUrgencyText(p.diffDays);
         html += '<div class="tx-row">';
         html += '  <span class="tx-dot" style="background:' + pColor + '"></span>';
         html += '  <div style="flex:1;min-width:0"><div class="tx-label">' + esc(formatDayMonthShort(p.date)) + (p.person ? (' · <span style="color:var(--gold);font-weight:600">' + esc(p.person) + '</span>') : '') + (p.note?(' · '+esc(p.note)):'') + '</div></div>';
@@ -2214,12 +2225,12 @@ function renderResumen(totals, breakdown){
   html += '  <div class="balance-equal-row">';
   html += '    <div class="balance-equal-col">';
   html += '      <div class="balance-equal-label">USD</div>';
-  html += '      <div class="balance-equal-value" style="color:' + (parcialUSD>=0?'var(--teal)':'var(--coral)') + '">' + fmt(parcialUSD,'USD') + '</div>';
+  html += '      <div class="balance-equal-value" style="color:' + deltaColor(parcialUSD>=0) + '">' + fmt(parcialUSD,'USD') + '</div>';
   html += '    </div>';
   html += '    <div class="balance-divider"></div>';
   html += '    <div class="balance-equal-col">';
   html += '      <div class="balance-equal-label">BOLÍVARES</div>';
-  html += '      <div class="balance-equal-value" style="color:' + (parcialVES>=0?'var(--teal)':'var(--coral)') + '">' + fmt(parcialVES,'VES') + '</div>';
+  html += '      <div class="balance-equal-value" style="color:' + deltaColor(parcialVES>=0) + '">' + fmt(parcialVES,'VES') + '</div>';
   html += '    </div>';
   html += '  </div>';
   html += '  <div class="saldo-note">Saldo Total (' + fmt(saldo.usd,'USD') + ') Menos tu Ahorro Apartado (' + fmt(ahorroApartado.usd||0,'USD') + ')</div>';
@@ -2238,7 +2249,7 @@ function renderResumen(totals, breakdown){
   html += '      <div class="balance-equal-value" style="color:' + (closingVES>=0?'var(--gold)':'var(--coral)') + '">' + fmt(closingVES,'VES') + '</div>';
   html += '    </div>';
   html += '  </div>';
-  html += '  <div class="saldo-note"><span class="saldo-note-line">Saldo Inicial: ' + fmt(opening.usd,'USD') + ' / ' + fmt(opening.ves,'VES') + '</span><span class="saldo-note-line">+ Mes Actual: <span class="mes-actual-value" style="color:' + (balanceUSD>=0?'var(--teal)':'var(--coral)') + '">' + fmt(balanceUSD,'USD') + '</span> / <span class="mes-actual-value" style="color:' + (balanceVES>=0?'var(--teal)':'var(--coral)') + '">' + fmt(balanceVES,'VES') + '</span></span></div>';
+  html += '  <div class="saldo-note"><span class="saldo-note-line">Saldo Inicial: ' + fmt(opening.usd,'USD') + ' / ' + fmt(opening.ves,'VES') + '</span><span class="saldo-note-line">+ Mes Actual: <span class="mes-actual-value" style="color:' + deltaColor(balanceUSD>=0) + '">' + fmt(balanceUSD,'USD') + '</span> / <span class="mes-actual-value" style="color:' + deltaColor(balanceVES>=0) + '">' + fmt(balanceVES,'VES') + '</span></span></div>';
   if (state.bcvRate.usd){
     var dailyRows = getDailyBalances();
     var lastRow = dailyRows[dailyRows.length - 1];
@@ -2302,8 +2313,8 @@ function renderMovimientos(monthTx){
     html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + g.key + '\',' + gi + ')">';
     html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(title) + '</span></span>';
     html += '  <span class="group-net">';
-    if (g.netUSD !== 0) html += '<span style="color:' + (g.netUSD>=0?'var(--teal)':'var(--coral)') + '">' + (g.netUSD>=0?'+':'') + fmt(g.netUSD,'USD') + '</span> ';
-    if (g.netVES !== 0) html += '<span style="color:' + (g.netVES>=0?'var(--teal)':'var(--coral)') + '">' + (g.netVES>=0?'+':'') + fmt(g.netVES,'VES') + '</span>';
+    if (g.netUSD !== 0) html += '<span style="color:' + deltaColor(g.netUSD>=0) + '">' + (g.netUSD>=0?'+':'') + fmt(g.netUSD,'USD') + '</span> ';
+    if (g.netVES !== 0) html += '<span style="color:' + deltaColor(g.netVES>=0) + '">' + (g.netVES>=0?'+':'') + fmt(g.netVES,'VES') + '</span>';
     html += '</span>';
     html += '</button>';
 
@@ -2319,12 +2330,12 @@ function renderMovimientos(monthTx){
       }
       var isIncome = t.type === 'ingreso';
       html += '<div class="tx-row">';
-      html += '  <span class="tx-dot" style="background:' + (isIncome?'var(--teal)':'var(--coral)') + '"></span>';
+      html += '  <span class="tx-dot" style="background:' + deltaColor(isIncome) + '"></span>';
       html += '  <div style="flex:1;min-width:0">';
       html += '    <div class="tx-label">' + esc(catLabel(t.category)) + '</div>';
       html += '    <div class="tx-date">' + esc(t.date) + (t.note ? ' · ' + esc(t.note) : '') + '</div>';
       html += '  </div>';
-      html += '  <div class="tx-amount" style="color:' + (isIncome?'var(--teal)':'var(--coral)') + '">' + (isIncome?'+ ':'\u2212 ') + fmt(t.amount, t.currency) + '</div>';
+      html += '  <div class="tx-amount" style="color:' + deltaColor(isIncome) + '">' + (isIncome?'+ ':'\u2212 ') + fmt(t.amount, t.currency) + '</div>';
       html += '  <button class="trash-btn" onclick="editTransaction(\'' + t.id + '\')" title="Editar">' + ICONS.edit + '</button>';
       html += '  <button class="trash-btn" onclick="deleteTransaction(\'' + t.id + '\')" title="Eliminar">' + ICONS.trash + '</button>';
       html += '</div>';
@@ -2371,8 +2382,8 @@ function renderDiario(){
     html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + w.key + '\',' + wi + ')">';
     html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(label) + '</span></span>';
     html += '  <span class="group-net">';
-    if (w.netUSD !== 0) html += '<span style="color:' + (w.netUSD>=0?'var(--teal)':'var(--coral)') + '">' + (w.netUSD>=0?'+':'') + fmt(w.netUSD,'USD') + '</span> ';
-    if (w.netVES !== 0) html += '<span style="color:' + (w.netVES>=0?'var(--teal)':'var(--coral)') + '">' + (w.netVES>=0?'+':'') + fmt(w.netVES,'VES') + '</span>';
+    if (w.netUSD !== 0) html += '<span style="color:' + deltaColor(w.netUSD>=0) + '">' + (w.netUSD>=0?'+':'') + fmt(w.netUSD,'USD') + '</span> ';
+    if (w.netVES !== 0) html += '<span style="color:' + deltaColor(w.netVES>=0) + '">' + (w.netVES>=0?'+':'') + fmt(w.netVES,'VES') + '</span>';
     html += '</span></button>';
 
     if (!expanded) return;
@@ -2510,14 +2521,14 @@ function renderIncomeMetaVsRealCard(totals){
     var diffU = totals.incomeUSD - goal.usd;
     html += '  <div class="goal-row"><span>Meta (USD)</span><span style="font-family:var(--font-mono)">' + fmt(goal.usd,'USD') + '</span></div>';
     html += '  <div class="goal-row"><span>Real (USD)</span><span style="font-family:var(--font-mono)">' + fmt(totals.incomeUSD,'USD') + '</span></div>';
-    html += '  <div class="goal-row"><span>Diferencia</span><span style="font-family:var(--font-mono);color:' + (diffU>=0?'var(--teal)':'var(--coral)') + '">' + (diffU>=0?'+ ':'− ') + fmt(diffU,'USD') + '</span></div>';
+    html += '  <div class="goal-row"><span>Diferencia</span><span style="font-family:var(--font-mono);color:' + deltaColor(diffU>=0) + '">' + (diffU>=0?'+ ':'− ') + fmt(diffU,'USD') + '</span></div>';
   }
   if (goal.ves > 0){
     if (goal.usd > 0) html += '  <div style="height:1px;background:var(--line);margin:8px 0"></div>';
     var diffV = totals.incomeVES - goal.ves;
     html += '  <div class="goal-row"><span>Meta (Bs.)</span><span style="font-family:var(--font-mono)">' + fmt(goal.ves,'VES') + '</span></div>';
     html += '  <div class="goal-row"><span>Real (Bs.)</span><span style="font-family:var(--font-mono)">' + fmt(totals.incomeVES,'VES') + '</span></div>';
-    html += '  <div class="goal-row"><span>Diferencia</span><span style="font-family:var(--font-mono);color:' + (diffV>=0?'var(--teal)':'var(--coral)') + '">' + (diffV>=0?'+ ':'− ') + fmt(diffV,'VES') + '</span></div>';
+    html += '  <div class="goal-row"><span>Diferencia</span><span style="font-family:var(--font-mono);color:' + deltaColor(diffV>=0) + '">' + (diffV>=0?'+ ':'− ') + fmt(diffV,'VES') + '</span></div>';
   }
   html += '</div>';
   return html;
@@ -2556,7 +2567,7 @@ function renderBudgetVsRealIncomeCard(totals){
   var html = '';
   if (sumUsd > 0 && totals.incomeUSD > 0){
     var pctU = Math.round((sumUsd / totals.incomeUSD) * 100);
-    var colorU = pctU > 100 ? 'var(--coral)' : 'var(--teal)';
+    var colorU = pctBadgeColor(pctU, 100, 'var(--coral)', 'var(--teal)');
     html += '<div class="goal-card">';
     html += '  <div class="goal-row"><span>Presupuesto vs Ingreso Real (USD)</span><span class="goal-pct" style="color:' + colorU + '">' + pctU + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctU) + '%;background:' + colorU + '"></div></div>';
@@ -2565,7 +2576,7 @@ function renderBudgetVsRealIncomeCard(totals){
   }
   if (sumVes > 0 && totals.incomeVES > 0){
     var pctV = Math.round((sumVes / totals.incomeVES) * 100);
-    var colorV = pctV > 100 ? 'var(--coral)' : 'var(--teal)';
+    var colorV = pctBadgeColor(pctV, 100, 'var(--coral)', 'var(--teal)');
     html += '<div class="goal-card" style="margin-top:8px">';
     html += '  <div class="goal-row"><span>Presupuesto vs Ingreso Real (Bs.)</span><span class="goal-pct" style="color:' + colorV + '">' + pctV + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctV) + '%;background:' + colorV + '"></div></div>';
@@ -2596,7 +2607,7 @@ function renderBudgetVsPaymentsCard(){
   var html = '';
   if (sumUsd > 0){
     var pctU = Math.round((pending.usd / sumUsd) * 100);
-    var colorU = pctU > 80 ? 'var(--coral)' : 'var(--gold)';
+    var colorU = pctBadgeColor(pctU, 80, 'var(--coral)', 'var(--gold)');
     html += '<div class="goal-card">';
     html += '  <div class="goal-row"><span>Pagos comprometidos del Presupuesto (USD)</span><span class="goal-pct" style="color:' + colorU + '">' + pctU + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctU) + '%;background:' + colorU + '"></div></div>';
@@ -2605,7 +2616,7 @@ function renderBudgetVsPaymentsCard(){
   }
   if (sumVes > 0){
     var pctV = Math.round((pending.ves / sumVes) * 100);
-    var colorV = pctV > 80 ? 'var(--coral)' : 'var(--gold)';
+    var colorV = pctBadgeColor(pctV, 80, 'var(--coral)', 'var(--gold)');
     html += '<div class="goal-card" style="margin-top:8px">';
     html += '  <div class="goal-row"><span>Pagos comprometidos del Presupuesto (Bs.)</span><span class="goal-pct" style="color:' + colorV + '">' + pctV + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctV) + '%;background:' + colorV + '"></div></div>';
@@ -2638,7 +2649,7 @@ function renderBudgetVsIncomeCard(){
   var html = '';
   if (goal.usd > 0){
     var pctU = Math.round((sumUsd / goal.usd) * 100);
-    var colorU = pctU > 100 ? 'var(--coral)' : 'var(--teal)';
+    var colorU = pctBadgeColor(pctU, 100, 'var(--coral)', 'var(--teal)');
     html += '<div class="goal-card">';
     html += '  <div class="goal-row"><span>Presupuesto vs Ingreso (USD)</span><span class="goal-pct" style="color:' + colorU + '">' + pctU + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctU) + '%;background:' + colorU + '"></div></div>';
@@ -2647,7 +2658,7 @@ function renderBudgetVsIncomeCard(){
   }
   if (goal.ves > 0){
     var pctV = Math.round((sumVes / goal.ves) * 100);
-    var colorV = pctV > 100 ? 'var(--coral)' : 'var(--teal)';
+    var colorV = pctBadgeColor(pctV, 100, 'var(--coral)', 'var(--teal)');
     html += '<div class="goal-card" style="margin-top:8px">';
     html += '  <div class="goal-row"><span>Presupuesto vs Ingreso (Bs.)</span><span class="goal-pct" style="color:' + colorV + '">' + pctV + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctV) + '%;background:' + colorV + '"></div></div>';
@@ -2963,9 +2974,9 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
       list.forEach(function(p){
         var isEditing = editing && editing.id === p.id;
         html += '<div class="tx-row" style="' + (isEditing ? 'border:1px solid var(--gold)' : '') + '">';
-        html += '  <span class="tx-dot" style="background:' + (p.paid?'var(--teal)':'var(--coral)') + '"></span>';
+        html += '  <span class="tx-dot" style="background:' + deltaColor(p.paid) + '"></span>';
         html += '  <div style="flex:1;min-width:0"><div class="tx-label">' + esc(formatDayMonthShort(p.date)) + (p.person ? (' · <span style="color:var(--gold);font-weight:600">' + esc(p.person) + '</span>') : '') + (p.note ? (' · ' + esc(p.note)) : '') + '</div>' + (p.amount ? ('<div class="tx-date">' + fmt(p.amount, p.currency||'VES') + budgetEquivalentInline(p.amount, p.currency||'VES') + '</div>') : '') + '</div>';
-        html += '  <button class="trash-btn" style="width:auto;padding:4px 8px;font-family:var(--font-mono);font-size:10px;color:' + (p.paid?'var(--teal)':'var(--coral)') + '" onclick="togglePaymentPaid(\'' + catId + '\',\'' + p.id + '\')">' + (p.paid?'Pagado':'Pendiente') + '</button>';
+        html += '  <button class="trash-btn" style="width:auto;padding:4px 8px;font-family:var(--font-mono);font-size:10px;color:' + deltaColor(p.paid) + '" onclick="togglePaymentPaid(\'' + catId + '\',\'' + p.id + '\')">' + (p.paid?'Pagado':'Pendiente') + '</button>';
         html += '  <button class="trash-btn" onclick="editPaymentDate(\'' + catId + '\',\'' + p.id + '\')" title="Editar">' + ICONS.edit + '</button>';
         html += '  <button class="trash-btn" onclick="deletePaymentDate(\'' + catId + '\',\'' + p.id + '\')" title="Eliminar">' + ICONS.trash + '</button>';
         html += '</div>';
