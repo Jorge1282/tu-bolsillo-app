@@ -397,7 +397,7 @@ var state = {
   authUsername: '',
   authPassHash: '',
   authRecoveryHash: '',
-  authInput: { username: '', password: '', password2: '' },
+  authInput: { username: '', password: '', password2: '', acceptedTerms: false },
   authError: '',
   locked: true,
   budgets: {},
@@ -615,6 +615,7 @@ function loadAuth(){
     state.authUsername = parsed.username || '';
     state.authPassHash = parsed.passHash || '';
     state.authRecoveryHash = parsed.recoveryHash || '';
+    state.termsAcceptedAt = parsed.termsAcceptedAt || null;
     state.authMode = 'login';
   } else {
     state.authMode = 'setup';
@@ -622,7 +623,7 @@ function loadAuth(){
   state.locked = true;
 }
 function persistAuth(){
-  Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash });
+  Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash, termsAcceptedAt: state.termsAcceptedAt });
 }
 function generateRecoveryCode(){
   var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; /* sin 0/O ni 1/I/L, para que no se confundan al copiar a mano */
@@ -635,6 +636,11 @@ function generateRecoveryCode(){
   return groups.join('-');
 }
 function setAuthField(field, value){ state.authInput[field] = value; state.authError = ''; }
+function toggleAcceptTerms(){
+  state.authInput.acceptedTerms = !state.authInput.acceptedTerms;
+  state.authError = '';
+  render();
+}
 function submitSetup(){
   var u = (state.authInput.username || '').trim();
   var p = state.authInput.password || '';
@@ -642,14 +648,16 @@ function submitSetup(){
   if (!u){ state.authError = 'Escribe un nombre de usuario.'; render(); return; }
   if (p.length < 4){ state.authError = 'La contraseña debe tener al menos 4 caracteres.'; render(); return; }
   if (p !== p2){ state.authError = 'Las contraseñas no coinciden.'; render(); return; }
+  if (!state.authInput.acceptedTerms){ state.authError = 'Debes aceptar la Política de Privacidad y Términos de Uso para continuar.'; render(); return; }
   var code = generateRecoveryCode();
   state.authUsername = u;
   state.authPassHash = simpleHash(p);
   state.authRecoveryHash = simpleHash(code);
   state.authMode = 'login';
+  state.termsAcceptedAt = todayStr();
   persistAuth();
   state.locked = false;
-  state.authInput = { username: '', password: '', password2: '' };
+  state.authInput = { username: '', password: '', password2: '', acceptedTerms: false };
   state.authError = '';
   if (!state.pro || !state.pro.code){
     var trialExpires = new Date(); trialExpires.setDate(trialExpires.getDate() + 7);
@@ -2072,6 +2080,10 @@ function renderAuthScreen(){
     html += '    <div class="auth-field"><label>Contraseña</label><input class="input auth-input" type="password" placeholder="Mínimo 4 caracteres" oninput="setAuthField(\'password\', this.value)"></div>';
     html += '    <div class="auth-field"><label>Repite la contraseña</label><input class="input auth-input" type="password" placeholder="Escríbela de nuevo" oninput="setAuthField(\'password2\', this.value)" onkeyup="if(event.key===\'Enter\') submitSetup()"></div>';
     if (state.authError) html += '<div class="lock-error">' + esc(state.authError) + '</div>';
+    html += '    <label style="display:flex;align-items:flex-start;gap:10px;margin:16px 0;padding:14px;background:var(--surface-2);border:1px solid ' + (state.authInput.acceptedTerms?'var(--teal)':'var(--gold)') + ';border-radius:10px;cursor:pointer;text-align:left" onclick="event.preventDefault();toggleAcceptTerms()">';
+    html += '      <input type="checkbox" ' + (state.authInput.acceptedTerms?'checked':'') + ' onclick="event.stopPropagation();toggleAcceptTerms()" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">';
+    html += '      <span style="font-size:12.5px;color:var(--text-dim);line-height:1.5">He leído y acepto la <a href="https://jorge1282.github.io/tu-bolsillo-app-web/privacidad.html" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--gold);text-decoration:underline">Política de Privacidad y Términos de Uso</a></span>';
+    html += '    </label>';
     html += '    <button class="primary-btn lock-btn" onclick="submitSetup()">Crear cuenta</button>';
     html += '    <div class="auth-note"><span class="auth-note-title">Importante</span><div class="auth-note-body">Al crear tu cuenta te vamos a mostrar un código de recuperación una sola vez — guardalo, es la forma de recuperar el acceso si olvidás tu contraseña. Sin ese código, no hay forma de recuperar nada, ya que todo se guarda únicamente en este dispositivo.</div></div>';
     html += '  </div>';
