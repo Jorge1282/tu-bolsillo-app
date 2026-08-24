@@ -335,7 +335,13 @@ var STORAGE_KEY_PRO = 'mibolsilloapp_pro_v1';
    Aviso honesto: como no hay servidor, alguien técnicamente hábil podría
    leer este código y generar códigos propios. Es una fricción de buena fe,
    no una protección perfecta — igual que cualquier app sin backend real. */
-var PRO_SECRET = 'TuBolsilloApp-2026-Secreto';
+/* El valor final es idéntico al de siempre — solo se arma en partes para no
+   aparecer como una sola cadena obvia al mirar el código fuente. Aviso honesto:
+   esto sube la barrera para el usuario casual, NO detiene a alguien decidido a
+   inspeccionar el código con las herramientas de desarrollador del navegador —
+   esa es una limitación de fondo de cualquier validación 100% del lado cliente,
+   sin servidor, ya conversada. */
+var PRO_SECRET = ['TuBolsilloApp', '2026', 'Secreto'].join('-');
 var PRO_PLAN_DAYS = { '30': 30, '90': 90, '365': 365 };
 var BCV_ENDPOINTS = [
   'https://bcv.today/api/v1/rate.json',
@@ -396,7 +402,10 @@ var state = {
   authMode: 'setup', /* 'setup' | 'login' */
   authUsername: '',
   authPassHash: '',
+  authSalt: '',
   authRecoveryHash: '',
+  loginAttempts: 0,
+  lockedUntil: null,
   authInput: { username: '', password: '', password2: '', acceptedTerms: false },
   authError: '',
   locked: true,
@@ -462,6 +471,35 @@ function simpleHash(str){
   var hash = 5381;
   for (var i=0;i<str.length;i++){ hash = ((hash*33) ^ str.charCodeAt(i)) >>> 0; }
   return hash.toString(16);
+}
+
+/* ---------- hash seguro de contraseñas (SHA-256 + sal única por usuario) ----------
+   NOTA: simpleHash() de arriba se deja intacta a propósito — la siguen usando los
+   códigos de activación Pro (generados con la herramienta externa), y cambiarla
+   ahí invalidaría todos los códigos ya generados. El hash de CONTRASEÑAS es un
+   sistema aparte, separado, y este sí usa criptografía real del navegador. */
+function generateSalt(){
+  if (window.crypto && crypto.getRandomValues){
+    var arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    return Array.from(arr).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+  }
+  /* Respaldo si el navegador no soporta crypto (muy raro hoy en día) */
+  return Math.random().toString(16).slice(2) + Date.now().toString(16);
+}
+function hashPasswordSecure(password, salt){
+  if (window.crypto && crypto.subtle && crypto.subtle.digest){
+    var encoder = new TextEncoder();
+    var data = encoder.encode(password + '::' + salt);
+    return crypto.subtle.digest('SHA-256', data).then(function(buffer){
+      var bytes = Array.from(new Uint8Array(buffer));
+      return bytes.map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+    });
+  }
+  /* Respaldo (solo si el navegador no soporta Web Crypto, ej. abierto como archivo
+     local sin HTTPS) — mucho menos fuerte, pero evita que la app deje de funcionar. */
+  console.warn('Web Crypto no disponible — usando hash de respaldo, menos seguro.');
+  return Promise.resolve(simpleHash(password + '::' + salt));
 }
 
 /* ---------- sistema Pro (código de activación) ---------- */
@@ -614,8 +652,11 @@ function loadAuth(){
   if (parsed){
     state.authUsername = parsed.username || '';
     state.authPassHash = parsed.passHash || '';
+    state.authSalt = parsed.salt || '';
     state.authRecoveryHash = parsed.recoveryHash || '';
     state.termsAcceptedAt = parsed.termsAcceptedAt || null;
+    state.loginAttempts = parsed.loginAttempts || 0;
+    state.lockedUntil = parsed.lockedUntil || null;
     state.authMode = 'login';
   } else {
     state.authMode = 'setup';
@@ -623,7 +664,7 @@ function loadAuth(){
   state.locked = true;
 }
 function persistAuth(){
-  Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, recoveryHash: state.authRecoveryHash, termsAcceptedAt: state.termsAcceptedAt });
+  Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, salt: state.authSalt, recoveryHash: state.authRecoveryHash, termsAcceptedAt: state.termsAcceptedAt, loginAttempts: state.loginAttempts, lockedUntil: state.lockedUntil });
 }
 function generateRecoveryCode(){
   var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; /* sin 0/O ni 1/I/L, para que no se confundan al copiar a mano */
@@ -650,36 +691,68 @@ function submitSetup(){
   if (p !== p2){ state.authError = 'Las contraseñas no coinciden.'; render(); return; }
   if (!state.authInput.acceptedTerms){ state.authError = 'Debes aceptar la Política de Privacidad y Términos de Uso para continuar.'; render(); return; }
   var code = generateRecoveryCode();
-  state.authUsername = u;
-  state.authPassHash = simpleHash(p);
-  state.authRecoveryHash = simpleHash(code);
-  state.authMode = 'login';
-  state.termsAcceptedAt = todayStr();
-  persistAuth();
-  state.locked = false;
-  state.authInput = { username: '', password: '', password2: '', acceptedTerms: false };
+  var salt = generateSalt();
   state.authError = '';
-  if (!state.pro || !state.pro.code){
-    var trialExpires = new Date(); trialExpires.setDate(trialExpires.getDate() + 7);
-    state.pro = { active: true, expiresAt: trialExpires.toISOString().slice(0,10), plan: 'trial', code: 'PRUEBA-GRATIS-7D' };
-    saveProToStorage();
-    state.showTrialWelcome = true;
-  }
-  render();
-  window.alert('Guardá este código de recuperación en un lugar seguro:\n\n' + code + '\n\nEs la ÚNICA forma de recuperar tu cuenta si olvidás la contraseña — nadie, ni siquiera Anthropic ni el desarrollador de esta app, puede dártelo si lo perdés. Anotalo ahora.');
+  hashPasswordSecure(p, salt).then(function(hash){
+    state.authUsername = u;
+    state.authPassHash = hash;
+    state.authSalt = salt;
+    state.authRecoveryHash = simpleHash(code);
+    state.authMode = 'login';
+    state.termsAcceptedAt = todayStr();
+    state.loginAttempts = 0;
+    state.lockedUntil = null;
+    persistAuth();
+    state.locked = false;
+    state.authInput = { username: '', password: '', password2: '', acceptedTerms: false };
+    state.authError = '';
+    if (!state.pro || !state.pro.code){
+      var trialExpires = new Date(); trialExpires.setDate(trialExpires.getDate() + 7);
+      state.pro = { active: true, expiresAt: trialExpires.toISOString().slice(0,10), plan: 'trial', code: 'PRUEBA-GRATIS-7D' };
+      saveProToStorage();
+      state.showTrialWelcome = true;
+    }
+    render();
+    window.alert('Guarda este código de recuperación en un lugar seguro:\n\n' + code + '\n\nEs la ÚNICA forma de recuperar tu cuenta si olvidas la contraseña — nadie, ni siquiera Anthropic ni el desarrollador de esta app, puede dártelo si lo pierdes. Anótalo ahora.');
+  });
 }
 function submitLogin(){
   var u = (state.authInput.username || '').trim();
   var p = state.authInput.password || '';
-  if (u === state.authUsername && p && simpleHash(p) === state.authPassHash){
-    state.locked = false;
-    state.authInput = { username: '', password: '', password2: '' };
-    state.authError = '';
-  } else {
-    state.authError = 'Usuario o contraseña incorrectos.';
-    state.authInput.password = '';
+  var now = Date.now();
+  if (state.lockedUntil && now < state.lockedUntil){
+    var secondsLeft = Math.ceil((state.lockedUntil - now) / 1000);
+    state.authError = 'Demasiados intentos fallidos. Espera ' + secondsLeft + ' segundos antes de volver a intentar.';
+    render();
+    return;
   }
-  render();
+  if (state.lockedUntil && now >= state.lockedUntil){
+    state.lockedUntil = null;
+    state.loginAttempts = 0;
+  }
+  if (!u || !p){ state.authError = 'Escribe tu usuario y contraseña.'; render(); return; }
+  state.authError = '';
+  hashPasswordSecure(p, state.authSalt || '').then(function(hash){
+    if (u === state.authUsername && hash === state.authPassHash){
+      state.locked = false;
+      state.authInput = { username: '', password: '', password2: '' };
+      state.authError = '';
+      state.loginAttempts = 0;
+      state.lockedUntil = null;
+      persistAuth();
+    } else {
+      state.loginAttempts = (state.loginAttempts || 0) + 1;
+      if (state.loginAttempts >= 5){
+        state.lockedUntil = Date.now() + 60000; /* 60 segundos de bloqueo */
+        state.authError = 'Demasiados intentos fallidos. Espera 60 segundos antes de volver a intentar.';
+      } else {
+        state.authError = 'Usuario o contraseña incorrectos. (' + (5 - state.loginAttempts) + ' intentos restantes antes del bloqueo temporal)';
+      }
+      state.authInput.password = '';
+      persistAuth();
+    }
+    render();
+  });
 }
 function startRecovery(){
   state.authMode = 'recover';
@@ -702,15 +775,22 @@ function submitRecovery(){
   if (np.length < 4){ state.authError = 'La nueva contraseña debe tener al menos 4 caracteres.'; render(); return; }
   if (np !== np2){ state.authError = 'Las contraseñas no coinciden.'; render(); return; }
   var newCode = generateRecoveryCode();
-  state.authPassHash = simpleHash(np);
-  state.authRecoveryHash = simpleHash(newCode);
-  persistAuth();
-  state.locked = false;
-  state.authMode = 'login';
-  state.authInput = { username: '', password: '', password2: '' };
+  var newSalt = generateSalt();
   state.authError = '';
-  render();
-  window.alert('Contraseña restablecida. Tu código de recuperación anterior ya no sirve — este es tu nuevo código, guardalo:\n\n' + newCode);
+  hashPasswordSecure(np, newSalt).then(function(hash){
+    state.authPassHash = hash;
+    state.authSalt = newSalt;
+    state.authRecoveryHash = simpleHash(newCode);
+    state.loginAttempts = 0;
+    state.lockedUntil = null;
+    persistAuth();
+    state.locked = false;
+    state.authMode = 'login';
+    state.authInput = { username: '', password: '', password2: '' };
+    state.authError = '';
+    render();
+    window.alert('Contraseña restablecida. Tu código de recuperación anterior ya no sirve — este es tu nuevo código, guárdalo:\n\n' + newCode);
+  });
 }
 function lockNow(){
   state.locked = true;
@@ -722,33 +802,43 @@ function changeAccountPassword(){
   var cur = document.getElementById('curPassInput') ? document.getElementById('curPassInput').value : '';
   var np = document.getElementById('newPassInput') ? document.getElementById('newPassInput').value : '';
   var np2 = document.getElementById('newPassInput2') ? document.getElementById('newPassInput2').value : '';
-  if (simpleHash(cur) !== state.authPassHash){ window.alert('La contraseña actual no es correcta.'); return; }
-  if (np.length < 4){ window.alert('La nueva contraseña debe tener al menos 4 caracteres.'); return; }
-  if (np !== np2){ window.alert('Las contraseñas nuevas no coinciden.'); return; }
-  state.authPassHash = simpleHash(np);
-  persistAuth();
-  window.alert('Contraseña actualizada.');
-  render();
+  hashPasswordSecure(cur, state.authSalt || '').then(function(curHash){
+    if (curHash !== state.authPassHash){ window.alert('La contraseña actual no es correcta.'); return; }
+    if (np.length < 4){ window.alert('La nueva contraseña debe tener al menos 4 caracteres.'); return; }
+    if (np !== np2){ window.alert('Las contraseñas nuevas no coinciden.'); return; }
+    var newSalt = generateSalt();
+    hashPasswordSecure(np, newSalt).then(function(newHash){
+      state.authPassHash = newHash;
+      state.authSalt = newSalt;
+      persistAuth();
+      window.alert('Contraseña actualizada.');
+      render();
+    });
+  });
 }
 function changeAccountUsername(){
   var cur = document.getElementById('curPassForUserInput') ? document.getElementById('curPassForUserInput').value : '';
   var newU = document.getElementById('newUsernameInput') ? document.getElementById('newUsernameInput').value.trim() : '';
-  if (simpleHash(cur) !== state.authPassHash){ window.alert('La contraseña actual no es correcta.'); return; }
-  if (!newU){ window.alert('Escribe un nombre de usuario.'); return; }
-  state.authUsername = newU;
-  persistAuth();
-  window.alert('Nombre de usuario actualizado a "' + newU + '".');
-  render();
+  hashPasswordSecure(cur, state.authSalt || '').then(function(curHash){
+    if (curHash !== state.authPassHash){ window.alert('La contraseña actual no es correcta.'); return; }
+    if (!newU){ window.alert('Escribe un nombre de usuario.'); return; }
+    state.authUsername = newU;
+    persistAuth();
+    window.alert('Nombre de usuario actualizado a "' + newU + '".');
+    render();
+  });
 }
 function regenerateRecoveryCode(){
   var cur = document.getElementById('curPassForRecoveryInput') ? document.getElementById('curPassForRecoveryInput').value : '';
-  if (simpleHash(cur) !== state.authPassHash){ window.alert('La contraseña actual no es correcta.'); return; }
-  if (!window.confirm('Esto invalida tu código de recuperación anterior (si lo tenías) y genera uno nuevo. ¿Continuar?')) return;
-  var newCode = generateRecoveryCode();
-  state.authRecoveryHash = simpleHash(newCode);
-  persistAuth();
-  window.alert('Nuevo código de recuperación — guardalo en un lugar seguro:\n\n' + newCode);
-  render();
+  hashPasswordSecure(cur, state.authSalt || '').then(function(curHash){
+    if (curHash !== state.authPassHash){ window.alert('La contraseña actual no es correcta.'); return; }
+    if (!window.confirm('Esto invalida tu código de recuperación anterior (si lo tenías) y genera uno nuevo. ¿Continuar?')) return;
+    var newCode = generateRecoveryCode();
+    state.authRecoveryHash = simpleHash(newCode);
+    persistAuth();
+    window.alert('Nuevo código de recuperación — guárdalo en un lugar seguro:\n\n' + newCode);
+    render();
+  });
 }
 
 /* ---------- categorías personalizadas ---------- */
@@ -943,6 +1033,68 @@ function downloadBlob(content, filename, mime){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+/* ---------- cifrado de respaldos (AES-256-GCM, clave derivada de tu contraseña) ----------
+   El respaldo que se sube a Drive o se descarga como JSON queda ilegible para
+   cualquiera que no tenga tu contraseña — ni siquiera con acceso al archivo. */
+function bytesToBase64(bytes){
+  var binary = '';
+  for (var i = 0; i < bytes.length; i++){ binary += String.fromCharCode(bytes[i]); }
+  return window.btoa(binary);
+}
+function base64ToBytes(b64){
+  var binary = window.atob(b64);
+  var bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++){ bytes[i] = binary.charCodeAt(i); }
+  return bytes;
+}
+function hexToBytes(hex){
+  var bytes = new Uint8Array(hex.length / 2);
+  for (var i = 0; i < bytes.length; i++){ bytes[i] = parseInt(hex.substr(i*2, 2), 16); }
+  return bytes;
+}
+function deriveEncryptionKey(password, saltHex){
+  var encoder = new TextEncoder();
+  return crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']).then(function(keyMaterial){
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: hexToBytes(saltHex), iterations: 100000, hash: 'SHA-256' },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  });
+}
+function encryptBackup(jsonString, password){
+  if (!window.crypto || !crypto.subtle){
+    console.warn('Web Crypto no disponible — el respaldo se guarda SIN cifrar.');
+    return Promise.resolve({ encrypted: false, plain: jsonString });
+  }
+  var salt = generateSalt();
+  var iv = crypto.getRandomValues(new Uint8Array(12));
+  return deriveEncryptionKey(password, salt).then(function(key){
+    var encoder = new TextEncoder();
+    return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, encoder.encode(jsonString));
+  }).then(function(cipherBuffer){
+    return {
+      encrypted: true,
+      version: 1,
+      salt: salt,
+      iv: bytesToBase64(iv),
+      data: bytesToBase64(new Uint8Array(cipherBuffer))
+    };
+  });
+}
+function decryptBackup(pkg, password){
+  if (!pkg.encrypted){ return Promise.resolve(pkg.plain !== undefined ? pkg.plain : JSON.stringify(pkg)); }
+  return deriveEncryptionKey(password, pkg.salt).then(function(key){
+    var iv = base64ToBytes(pkg.iv);
+    var cipherBytes = base64ToBytes(pkg.data);
+    return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, cipherBytes);
+  }).then(function(plainBuffer){
+    return new TextDecoder().decode(plainBuffer);
+  });
+}
+
 function buildFullBackup(){
   return {
     exportedAt: new Date().toISOString(),
@@ -962,8 +1114,16 @@ function buildFullBackup(){
   };
 }
 function exportJSON(){
-  var backup = buildFullBackup();
-  downloadBlob(JSON.stringify(backup, null, 2), 'mi-bolsillo-app-respaldo-' + todayStr() + '.json', 'application/json;charset=utf-8;');
+  var pass = window.prompt('Para cifrar tu respaldo, confirma tu contraseña de la app:');
+  if (pass === null) return; /* canceló */
+  hashPasswordSecure(pass, state.authSalt || '').then(function(hash){
+    if (hash !== state.authPassHash){ window.alert('Contraseña incorrecta — no se generó el respaldo.'); return; }
+    var backup = buildFullBackup();
+    return encryptBackup(JSON.stringify(backup), pass).then(function(pkg){
+      downloadBlob(JSON.stringify(pkg, null, 2), 'mi-bolsillo-app-respaldo-' + todayStr() + '.json', 'application/json;charset=utf-8;');
+      window.alert('Respaldo cifrado y descargado. Vas a necesitar tu contraseña actual para restaurarlo.');
+    });
+  });
 }
 
 /* ---------- respaldo en Google Drive (opcional, cuenta propia del usuario) ---------- */
@@ -1051,41 +1211,48 @@ function findDriveBackupFile(){
 }
 function backupToDrive(){
   if (!isGoogleDriveConfigured()){ window.alert('El respaldo en Google Drive todavía no está configurado en esta app.'); return; }
-  state.driveStatus = 'working';
-  render();
-  ensureFreshDriveToken().then(function(){
-    return findDriveBackupFile();
-  }).then(function(existing){
-    var content = JSON.stringify(buildFullBackup(), null, 2);
-    var metadata = { name: DRIVE_BACKUP_FILENAME, mimeType: 'application/json' };
-    var boundary = 'mibolsilloapp' + Date.now();
-    var body = '--' + boundary + '\r\n' +
-      'Content-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) + '\r\n' +
-      '--' + boundary + '\r\n' +
-      'Content-Type: application/json\r\n\r\n' + content + '\r\n' +
-      '--' + boundary + '--';
-    var url = existing
-      ? 'https://www.googleapis.com/upload/drive/v3/files/' + existing.id + '?uploadType=multipart'
-      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-    return fetch(url, {
-      method: existing ? 'PATCH' : 'POST',
-      headers: { Authorization: 'Bearer ' + state.driveAccessToken, 'Content-Type': 'multipart/related; boundary=' + boundary },
-      body: body
+  var pass = window.prompt('Para cifrar tu respaldo en Drive, confirma tu contraseña de la app:');
+  if (pass === null) return;
+  hashPasswordSecure(pass, state.authSalt || '').then(function(hash){
+    if (hash !== state.authPassHash){ window.alert('Contraseña incorrecta — no se subió el respaldo.'); return; }
+    state.driveStatus = 'working';
+    render();
+    ensureFreshDriveToken().then(function(){
+      return findDriveBackupFile();
+    }).then(function(existing){
+      return encryptBackup(JSON.stringify(buildFullBackup()), pass).then(function(pkg){
+        var content = JSON.stringify(pkg);
+        var metadata = { name: DRIVE_BACKUP_FILENAME, mimeType: 'application/json' };
+        var boundary = 'mibolsilloapp' + Date.now();
+        var body = '--' + boundary + '\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) + '\r\n' +
+          '--' + boundary + '\r\n' +
+          'Content-Type: application/json\r\n\r\n' + content + '\r\n' +
+          '--' + boundary + '--';
+        var url = existing
+          ? 'https://www.googleapis.com/upload/drive/v3/files/' + existing.id + '?uploadType=multipart'
+          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        return fetch(url, {
+          method: existing ? 'PATCH' : 'POST',
+          headers: { Authorization: 'Bearer ' + state.driveAccessToken, 'Content-Type': 'multipart/related; boundary=' + boundary },
+          body: body
+        });
+      });
+    }).then(function(r){
+      if (!r.ok) throw new Error('drive upload failed: ' + r.status);
+      return r.json();
+    }).then(function(f){
+      state.driveFileId = f.id;
+      state.driveStatus = 'connected';
+      state.driveLastBackupAt = new Date().toISOString();
+      render();
+      window.alert('Respaldo cifrado guardado en tu Google Drive.');
+    }).catch(function(e){
+      console.error('backupToDrive error', e);
+      state.driveStatus = 'error';
+      render();
+      window.alert('No se pudo guardar el respaldo en Drive. Intenta de nuevo.');
     });
-  }).then(function(r){
-    if (!r.ok) throw new Error('drive upload failed: ' + r.status);
-    return r.json();
-  }).then(function(f){
-    state.driveFileId = f.id;
-    state.driveStatus = 'connected';
-    state.driveLastBackupAt = new Date().toISOString();
-    render();
-    window.alert('Respaldo guardado en tu Google Drive.');
-  }).catch(function(e){
-    console.error('backupToDrive error', e);
-    state.driveStatus = 'error';
-    render();
-    window.alert('No se pudo guardar el respaldo en Drive. Intenta de nuevo.');
   });
 }
 function restoreFromDrive(){
@@ -1104,38 +1271,56 @@ function restoreFromDrive(){
     return fetch('https://www.googleapis.com/drive/v3/files/' + existing.id + '?alt=media', {
       headers: { Authorization: 'Bearer ' + state.driveAccessToken }
     }).then(function(r){ return r.json(); });
-  }).then(function(data){
+  }).then(function(pkg){
     state.driveStatus = 'connected';
-    if (!data){ render(); return; }
-    var fecha = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'fecha desconocida';
-    if (!window.confirm('Esto reemplazará TODOS tus datos actuales en este teléfono con el respaldo de Google Drive (' + fecha + '). ¿Continuar?')){ render(); return; }
-    state.transactions = data.transactions || [];
-    state.goal = normalizeGoal(data.goal);
-    state.budgets = data.budgets || {};
-    state.initialBalance = data.initialBalance || { usd: 0, ves: 0 };
-    state.paymentCommitments = data.paymentCommitments || {};
-    state.customCategories = data.customCategories || { expense: [], income: [] };
-    state.familyIncomeGoal = data.familyIncomeGoal || { usd: 0, ves: 0 };
-    saveFamilyIncomeGoalToStorage();
-    state.currentSavings = data.currentSavings || { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0} };
-    state.savingsStart = data.savingsStart || { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0} };
-    if (data.savingsHistory){ state.savingsHistory = data.savingsHistory; saveSavingsHistoryToStorage(); }
-    if (data.pro){ state.pro = data.pro; saveProToStorage(); }
-    rebuildCategoryLists();
-    saveData();
-    saveBudgetsToStorage();
-    Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
-    savePaymentsToStorage();
-    saveCustomCategoriesToStorage();
-    saveSavingsToStorage();
-    saveSavingsStartToStorage();
-    render();
-    window.alert('Datos restaurados desde Google Drive.');
+    if (!pkg){ render(); return; }
+    var decryptPromise;
+    if (pkg.encrypted){
+      var pass = window.prompt('Este respaldo está cifrado. Escribe tu contraseña actual de la app para restaurarlo:');
+      if (pass === null){ render(); return; }
+      decryptPromise = decryptBackup(pkg, pass).catch(function(){
+        throw new Error('WRONG_PASSWORD');
+      });
+    } else {
+      /* Respaldo viejo, de antes de que existiera el cifrado — se sigue aceptando */
+      decryptPromise = Promise.resolve(JSON.stringify(pkg));
+    }
+    return decryptPromise.then(function(jsonString){
+      var data = JSON.parse(jsonString);
+      var fecha = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'fecha desconocida';
+      if (!window.confirm('Esto reemplazará TODOS tus datos actuales en este teléfono con el respaldo de Google Drive (' + fecha + '). ¿Continuar?')){ render(); return; }
+      state.transactions = data.transactions || [];
+      state.goal = normalizeGoal(data.goal);
+      state.budgets = data.budgets || {};
+      state.initialBalance = data.initialBalance || { usd: 0, ves: 0 };
+      state.paymentCommitments = data.paymentCommitments || {};
+      state.customCategories = data.customCategories || { expense: [], income: [] };
+      state.familyIncomeGoal = data.familyIncomeGoal || { usd: 0, ves: 0 };
+      saveFamilyIncomeGoalToStorage();
+      state.currentSavings = data.currentSavings || { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0} };
+      state.savingsStart = data.savingsStart || { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0} };
+      if (data.savingsHistory){ state.savingsHistory = data.savingsHistory; saveSavingsHistoryToStorage(); }
+      if (data.pro){ state.pro = data.pro; saveProToStorage(); }
+      rebuildCategoryLists();
+      saveData();
+      saveBudgetsToStorage();
+      Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
+      savePaymentsToStorage();
+      saveCustomCategoriesToStorage();
+      saveSavingsToStorage();
+      saveSavingsStartToStorage();
+      render();
+      window.alert('Datos restaurados desde Google Drive.');
+    });
   }).catch(function(e){
     console.error('restoreFromDrive error', e);
     state.driveStatus = 'error';
     render();
-    window.alert('No se pudo restaurar desde Drive. Intenta de nuevo.');
+    if (e && e.message === 'WRONG_PASSWORD'){
+      window.alert('No se pudo descifrar el respaldo — la contraseña ingresada no es correcta.');
+    } else {
+      window.alert('No se pudo restaurar desde Drive. Intenta de nuevo.');
+    }
   });
 }
 function formatDDMMYYYY(dateStr){
