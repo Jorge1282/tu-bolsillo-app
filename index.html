@@ -2332,20 +2332,48 @@ function renderResumen(totals, breakdown){
   var closingUSD = opening.usd + balanceUSD;
   var closingVES = opening.ves + balanceVES;
 
+  // ---- CÁLCULOS DE COMBINADO EN USD (con tasa histórica por transacción) ----
+  var totalsUSD = getMonthTotalsUSD(monthTx);
+  var incomeCombinedUSD = totalsUSD.incomeUSD;
+  var expenseCombinedUSD = totalsUSD.expenseUSD;
+
+  // Saldo disponible al inicio del mes en USD (restando ahorro)
+  var ahorroApartado = state.currentSavings.monthly;
+  var vdForOpening2 = getViewDate();
+  var monthStartStr2 = vdForOpening2.getFullYear() + '-' + pad2(vdForOpening2.getMonth()+1) + '-01';
+  var ahorroAlInicioMes = getSavingsAtDate('monthly', monthStartStr2);
+  var openingAvailableUSD = opening.usd - ahorroAlInicioMes.usd;
+  var openingAvailableVES = opening.ves - ahorroAlInicioMes.ves;
+  var openingRate = getRateForDate(monthStartStr2);
+  var openingAvailableCombined = openingAvailableUSD + (openingRate ? openingAvailableVES / openingRate : 0);
+  var totalIncomeCombinedUSD = openingAvailableCombined + incomeCombinedUSD;
+
   var html = '';
   html += renderTrialWelcomeBanner();
   html += renderProReminderBanner();
 
+  // Primera fila: INGRESOS y EGRESOS (solo USD)
   html += '<div class="stat-grid">';
   html += '  <div class="stat-card" style="border-color:var(--teal)">';
   html += '    <div class="stat-card-head"><span>INGRESOS</span><span style="color:var(--teal)">' + ICONS.up + '</span></div>';
-  html += '    <div class="stat-main" style="color:var(--teal)">' + fmt(totals.incomeUSD,'USD') + '</div>';
-  html += '    <div class="stat-sub">' + fmt(totals.incomeVES,'VES') + '</div>';
+  html += '    <div class="stat-main" style="color:var(--teal)">' + fmt(incomeCombinedUSD, 'USD') + '</div>';
   html += '  </div>';
   html += '  <div class="stat-card" style="border-color:var(--coral)">';
   html += '    <div class="stat-card-head"><span>EGRESOS</span><span style="color:var(--coral)">' + ICONS.down + '</span></div>';
-  html += '    <div class="stat-main" style="color:var(--coral)">' + fmt(totals.expenseUSD,'USD') + '</div>';
-  html += '    <div class="stat-sub">' + fmt(totals.expenseVES,'VES') + '</div>';
+  html += '    <div class="stat-main" style="color:var(--coral)">' + fmt(expenseCombinedUSD, 'USD') + '</div>';
+  html += '  </div>';
+  html += '</div>';
+
+  // Segunda fila: "Disponible al Inicio del Mes + Ingresos vs. Egresos" (solo USD)
+  html += '<div style="font-size:11px;letter-spacing:0.6px;color:var(--text-faint);text-transform:uppercase;margin:2px 2px 6px">Disponible al Inicio del Mes + Ingresos vs. Egresos</div>';
+  html += '<div class="stat-grid">';
+  html += '  <div class="stat-card" style="border-color:var(--teal)">';
+  html += '    <div class="stat-card-head"><span>INGRESOS TOTALES</span><span style="color:var(--teal)">' + ICONS.up + '</span></div>';
+  html += '    <div class="stat-main" style="color:var(--teal)">' + fmt(totalIncomeCombinedUSD, 'USD') + '</div>';
+  html += '  </div>';
+  html += '  <div class="stat-card" style="border-color:var(--coral)">';
+  html += '    <div class="stat-card-head"><span>EGRESOS</span><span style="color:var(--coral)">' + ICONS.down + '</span></div>';
+  html += '    <div class="stat-main" style="color:var(--coral)">' + fmt(expenseCombinedUSD, 'USD') + '</div>';
   html += '  </div>';
   html += '</div>';
 
@@ -2624,6 +2652,21 @@ function renderMetasMensual(totals){
   var totalTargetUSD = st.usd + g.usd;
   var totalTargetVES = st.ves + g.ves;
 
+  var monthTx = getMonthTx();
+  var totalsUSD = getMonthTotalsUSD(monthTx);
+  var incomeCombinedUSD = totalsUSD.incomeUSD;
+  var expenseCombinedUSD = totalsUSD.expenseUSD;
+
+  var opening = getMonthOpeningBalance();
+  var vdForOpening = getViewDate();
+  var monthStartStr = vdForOpening.getFullYear() + '-' + pad2(vdForOpening.getMonth()+1) + '-01';
+  var ahorroAlInicio = getSavingsAtDate('monthly', monthStartStr);
+  var openingAvailableUSD = opening.usd - ahorroAlInicio.usd;
+  var openingAvailableVES = opening.ves - ahorroAlInicio.ves;
+  var openingRate = getRateForDate(monthStartStr);
+  var openingAvailableCombined = openingAvailableUSD + (openingRate ? openingAvailableVES / openingRate : 0);
+  var totalIncomeCombinedUSD = openingAvailableCombined + incomeCombinedUSD;
+
   var ingresoPresupuestoHtml = '';
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:0">Ingreso: Meta vs Real</div>';
   ingresoPresupuestoHtml += renderIncomeMetaVsRealCard(totals);
@@ -2631,10 +2674,10 @@ function renderMetasMensual(totals){
   ingresoPresupuestoHtml += renderIncomeGoalSection(totals);
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Ingreso (Meta)</div>';
   ingresoPresupuestoHtml += renderBudgetVsIncomeCard();
-  ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Ingreso (Real)</div>';
-  ingresoPresupuestoHtml += renderBudgetVsRealIncomeCard(totals);
-  ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Pagos Comprometidos</div>';
-  ingresoPresupuestoHtml += renderBudgetVsPaymentsCard();
+  ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Ingreso Total (Disponible + Ingresos)</div>';
+  ingresoPresupuestoHtml += renderBudgetVsRealIncomeCard(totals, totalIncomeCombinedUSD, incomeCombinedUSD, openingAvailableCombined);
+  ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Gastos del Mes</div>';
+  ingresoPresupuestoHtml += renderBudgetVsExpensesCard(expenseCombinedUSD);
 
   var html = '';
   html += renderCollapsibleSection('metas-ingreso-presupuesto', 'Ingreso y Presupuesto', null, 0, ingresoPresupuestoHtml);
@@ -2686,7 +2729,7 @@ function renderIncomeGoalSection(totals){
   return html;
 }
 
-function renderBudgetVsRealIncomeCard(totals){
+function renderBudgetVsRealIncomeCard(totals, totalIncomeCombined, incomeCombined, openingAvailableCombined){
   var sumUsd = 0, sumVes = 0;
   Object.keys(state.budgets).forEach(function(id){
     var b = state.budgets[id];
@@ -2697,51 +2740,47 @@ function renderBudgetVsRealIncomeCard(totals){
   if (sumUsd === 0 && sumVes === 0){
     return '<div class="empty-note" style="padding-top:0">Todavía no definiste presupuestos por categoría (Ajustes → Presupuesto por Categoría).</div>';
   }
-  /* Mismo criterio que ya usan el Coach y Resumen: el "ingreso real" para planificar
-     no es solo lo que entró este mes — también cuenta lo que ya tenías Disponible
-     (Saldo Inicial del mes, menos el ahorro que ya existía en ese momento). */
-  var opening = getMonthOpeningBalance();
-  var vdForOpening3 = getViewDate();
-  var monthStartStr3 = vdForOpening3.getFullYear() + '-' + pad2(vdForOpening3.getMonth()+1) + '-01';
-  var ahorroAlInicio3 = getSavingsAtDate('monthly', monthStartStr3);
-  var openingAvailableUSD3 = opening.usd - ahorroAlInicio3.usd;
-  var incomeRealUSD = openingAvailableUSD3 + totals.incomeUSD;
-  if (incomeRealUSD <= 0){
+
+  var incomeTotal = totalIncomeCombined;
+  var incomeComb = incomeCombined;
+  var openingComb = openingAvailableCombined;
+  if (typeof incomeTotal !== 'number' || incomeTotal === undefined){
+    var opening = getMonthOpeningBalance();
+    var vdForOpening3 = getViewDate();
+    var monthStartStr3 = vdForOpening3.getFullYear() + '-' + pad2(vdForOpening3.getMonth()+1) + '-01';
+    var ahorroAlInicio3 = getSavingsAtDate('monthly', monthStartStr3);
+    var openingAvailableUSD3 = opening.usd - ahorroAlInicio3.usd;
+    var openingAvailableVES3 = opening.ves - ahorroAlInicio3.ves;
+    var openingRate3 = getRateForDate(monthStartStr3);
+    openingComb = openingAvailableUSD3 + (openingRate3 ? openingAvailableVES3 / openingRate3 : 0);
+    var monthTx = getMonthTx();
+    var totalsUSD = getMonthTotalsUSD(monthTx);
+    incomeComb = totalsUSD.incomeUSD;
+    incomeTotal = openingComb + incomeComb;
+  }
+
+  if (incomeTotal <= 0){
     return '<div class="empty-note" style="padding-top:0">Todavía no cargaste ingresos este mes ni tenés disponible previo — en cuanto haya algo, vas a ver acá qué porcentaje está comprometido en presupuesto.</div>';
   }
+
   var html = '';
-  if (sumUsd > 0){
-    var pctU = Math.round((sumUsd / incomeRealUSD) * 100);
+  if (sumUsd > 0 && incomeTotal > 0){
+    var pctU = Math.round((sumUsd / incomeTotal) * 100);
     var colorU = pctBadgeColor(pctU, 100, 'var(--coral)', 'var(--teal)');
     html += '<div class="goal-card">';
-    html += '  <div class="goal-row"><span>Presupuesto vs Disponible + Ingreso Real</span><span class="goal-pct" style="color:' + colorU + '">' + pctU + '%</span></div>';
+    html += '  <div class="goal-row"><span>Presupuesto vs Ingreso Total</span><span class="goal-pct" style="color:' + colorU + '">' + pctU + '%</span></div>';
     html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctU) + '%;background:' + colorU + '"></div></div>';
-    html += '  <div class="goal-numbers">' + fmt(sumUsd,'USD') + ' presupuestado de ' + fmt(incomeRealUSD,'USD') + ' disponible + cobrado' + (pctU>100?' · Ya comprometiste más de lo que tenías':'') + '</div>';
-    html += '  <div class="budget-note" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">Desglose: ' + fmt(openingAvailableUSD3,'USD') + ' Disponible al Inicio + ' + fmt(totals.incomeUSD,'USD') + ' Ingreso Real de este mes = ' + fmt(incomeRealUSD,'USD') + '</div>';
+    html += '  <div class="goal-numbers">' + fmt(sumUsd,'USD') + ' presupuestado de ' + fmt(incomeTotal,'USD') + ' disponible + cobrado' + (pctU>100?' · Ya comprometiste más de lo que tenías':'') + '</div>';
+    html += '  <div class="budget-note" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">Desglose: ' + fmt(openingComb,'USD') + ' Disponible al Inicio + ' + fmt(incomeComb,'USD') + ' Ingreso Real = ' + fmt(incomeTotal,'USD') + '</div>';
     html += '</div>';
-  } else {
-    html = '<div class="empty-note" style="padding-top:0">Tenés presupuesto definido solo en Bs. — no hay comparación en $ disponible todavía.</div>';
+  }
+  if (!html){
+    html = '<div class="empty-note" style="padding-top:0">Tenés presupuesto definido en una moneda distinta a la que tenés disponible este mes — no hay una comparación directa disponible todavía.</div>';
   }
   return html;
 }
 
-function coachPendingCommitmentsUSD(){
-  var totalUSD = 0;
-  var vd = getViewDate();
-  var monthPrefix = vd.getFullYear() + '-' + pad2(vd.getMonth() + 1);
-  getPaymentCategories().forEach(function(catId){
-    (state.paymentCommitments[catId] || []).forEach(function(p){
-      if (p.paid) return;
-      if (!p.date || p.date.indexOf(monthPrefix) !== 0) return;
-      var amt = Number(p.amount) || 0;
-      if (!amt) return;
-      if (p.currency === 'USD'){ totalUSD += amt; }
-      else { var rate = getRateForDate(p.date); if (rate) totalUSD += amt / rate; }
-    });
-  });
-  return totalUSD;
-}
-function renderBudgetVsPaymentsCard(){
+function renderBudgetVsExpensesCard(expenseCombinedUSD){
   var sumUsd = 0;
   Object.keys(state.budgets).forEach(function(id){
     var b = state.budgets[id];
@@ -2752,20 +2791,19 @@ function renderBudgetVsPaymentsCard(){
       if (todayRate) sumUsd += b.ves / todayRate;
     }
   });
-  var pendingUSD = coachPendingCommitmentsUSD();
   if (sumUsd === 0){
     return '<div class="empty-note" style="padding-top:0">Todavía no definiste presupuestos por categoría.</div>';
   }
-  if (pendingUSD === 0){
-    return '<div class="empty-note" style="padding-top:0">No tenés compromisos de pago pendientes registrados este mes.</div>';
+  if (expenseCombinedUSD === 0){
+    return '<div class="empty-note" style="padding-top:0">No hay egresos registrados este mes.</div>';
   }
-  var pct = Math.round((pendingUSD / sumUsd) * 100);
+  var pct = Math.round((expenseCombinedUSD / sumUsd) * 100);
   var color = pctBadgeColor(pct, 80, 'var(--coral)', 'var(--gold)');
   var html = '<div class="goal-card">';
-  html += '  <div class="goal-row"><span>Pagos comprometidos del Presupuesto</span><span class="goal-pct" style="color:' + color + '">' + pct + '%</span></div>';
+  html += '  <div class="goal-row"><span>Gastos del Mes</span><span class="goal-pct" style="color:' + color + '">' + pct + '%</span></div>';
   html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pct) + '%;background:' + color + '"></div></div>';
-  html += '  <div class="goal-numbers">' + fmt(pendingUSD,'USD') + ' en pagos fijos de ' + fmt(sumUsd,'USD') + ' presupuestados — el resto queda libre para gasto variable</div>';
-  html += '  <div class="budget-note" style="margin-top:6px">Los pagos cargados en Bs. se convierten a $ con la tasa vigente en la fecha de cada pago.</div>';
+  html += '  <div class="goal-numbers">' + fmt(expenseCombinedUSD,'USD') + ' en gastos de ' + fmt(sumUsd,'USD') + ' presupuestados' + (pct>100?' · Has superado tu presupuesto':'') + '</div>';
+  html += '  <div class="budget-note" style="margin-top:6px">Los gastos en Bs. se convierten a $ con la tasa vigente en la fecha de cada gasto.</div>';
   html += '</div>';
   return html;
 }
