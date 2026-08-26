@@ -257,14 +257,11 @@ var DEFAULT_INCOME_CATEGORIES = [
   {id:'sueldo', label:'Sueldo'},
   {id:'otro_ingreso', label:'Otro Ingreso'}
 ];
-/* Categorías personalizadas: se agregan en tiempo real y se guardan/sincronizan
-   junto con el resto de los datos. EXPENSE_CATEGORIES / INCOME_CATEGORIES / ALL_CATEGORIES
-   se recalculan con rebuildCategoryLists() cada vez que cambian. */
+
 var EXPENSE_CATEGORIES = DEFAULT_EXPENSE_CATEGORIES.slice();
 var INCOME_CATEGORIES = DEFAULT_INCOME_CATEGORIES.slice();
 var ALL_CATEGORIES = EXPENSE_CATEGORIES.concat(INCOME_CATEGORIES);
 function getPaymentCategories(){
-  /* En esta versión, cualquier categoría de egreso puede tener compromisos de pago. */
   return EXPENSE_CATEGORIES.map(function(c){ return c.id; });
 }
 function catLabel(id){
@@ -352,19 +349,6 @@ var STORAGE_KEY_INCOME_GOAL = 'mibolsilloapp_income_goal_v1';
 var STORAGE_KEY_CATEGORIES = 'mibolsilloapp_custom_categories_v1';
 var STORAGE_KEY_AUTH = 'mibolsilloapp_auth_v1';
 var STORAGE_KEY_PRO = 'mibolsilloapp_pro_v1';
-/* ====== SISTEMA PRO (código de activación, sin servidor) ======
-   Coach Financiero y Respaldo en Drive quedan bloqueados hasta ingresar
-   un código de activación válido, que vos generás con el archivo
-   "generador-codigos.html" (uso privado, no lo subas a tu sitio público).
-   Aviso honesto: como no hay servidor, alguien técnicamente hábil podría
-   leer este código y generar códigos propios. Es una fricción de buena fe,
-   no una protección perfecta — igual que cualquier app sin backend real. */
-/* El valor final es idéntico al de siempre — solo se arma en partes para no
-   aparecer como una sola cadena obvia al mirar el código fuente. Aviso honesto:
-   esto sube la barrera para el usuario casual, NO detiene a alguien decidido a
-   inspeccionar el código con las herramientas de desarrollador del navegador —
-   esa es una limitación de fondo de cualquier validación 100% del lado cliente,
-   sin servidor, ya conversada. */
 var PRO_SECRET = ['TuBolsilloApp', '2026', 'Secreto'].join('-');
 var PRO_PLAN_DAYS = { '30': 30, '90': 90, '365': 365 };
 var BCV_ENDPOINTS = [
@@ -376,7 +360,6 @@ var HISTORY_ENDPOINTS = [
   'https://cdn.jsdelivr.net/gh/grupoclip/bcv-api/api/v1/history.json'
 ];
 
-/* ---------- persistencia local (helper genérico sobre localStorage) ---------- */
 var Store = {
   get: function(key, fallback){
     try {
@@ -399,7 +382,6 @@ function fmt(n, currency){
   return (currency==='USD' ? '$ ' : 'Bs. ') + abs;
 }
 
-/* ---------- state ---------- */
 var state = {
   transactions: [],
   goal: { monthly: { usd: 0, ves: 0 }, weekly: { usd: 0, ves: 0 }, daily: { usd: 0, ves: 0 } },
@@ -415,15 +397,15 @@ var state = {
   form: { type:'egreso', currency:'VES', category:'alimentos', amount:'', date: todayStr(), note:'' },
   editingId: null,
   editingPayment: null,
-  movGroupBy: 'semana', /* 'semana' | 'categoria' */
+  movGroupBy: 'semana',
   expandedGroups: {},
   bcvRate: { usd: null, date: null, updatedAt: null },
-  rateStatus: 'idle', /* idle | loading | ok | error */
-  bcvHistory: {}, /* { 'YYYY-MM-DD': usdRate } */
+  rateStatus: 'idle',
+  bcvHistory: {},
   historyStatus: 'idle',
   initialBalance: { usd: 0, ves: 0 },
   syncStatus: 'local',
-  authMode: 'setup', /* 'setup' | 'login' */
+  authMode: 'setup',
   authUsername: '',
   authPassHash: '',
   authSalt: '',
@@ -444,7 +426,7 @@ var state = {
   customCategories: { expense: [], income: [] },
   showNewCategoryInput: false,
   editingCategory: null,
-  driveStatus: 'disconnected', /* disconnected | connecting | connected | working | error */
+  driveStatus: 'disconnected',
   driveEmail: null,
   driveAccessToken: null,
   driveTokenExpiry: 0,
@@ -468,11 +450,11 @@ function normalizeGoal(g){
       daily: g.daily || {usd:0,ves:0}
     };
   }
-  /* meta antigua (solo mensual, sin anidar) */
   return { monthly: { usd: g.usd||0, ves: g.ves||0 }, weekly: {usd:0,ves:0}, daily: {usd:0,ves:0} };
 }
 function saveData(){
   state.saveError = !Store.set(STORAGE_KEY, { transactions: state.transactions, goal: state.goal });
+  scheduleAutoBackup();
 }
 function loadCachedRate(){
   state.bcvRate = Store.get(STORAGE_KEY_RATE, state.bcvRate);
@@ -490,25 +472,18 @@ function saveInitialBalance(usd, ves){
   pushToCloud();
 }
 
-/* ---------- seguridad (usuario y contraseña, 100% local) ---------- */
 function simpleHash(str){
   var hash = 5381;
   for (var i=0;i<str.length;i++){ hash = ((hash*33) ^ str.charCodeAt(i)) >>> 0; }
   return hash.toString(16);
 }
 
-/* ---------- hash seguro de contraseñas (SHA-256 + sal única por usuario) ----------
-   NOTA: simpleHash() de arriba se deja intacta a propósito — la siguen usando los
-   códigos de activación Pro (generados con la herramienta externa), y cambiarla
-   ahí invalidaría todos los códigos ya generados. El hash de CONTRASEÑAS es un
-   sistema aparte, separado, y este sí usa criptografía real del navegador. */
 function generateSalt(){
   if (window.crypto && crypto.getRandomValues){
     var arr = new Uint8Array(16);
     crypto.getRandomValues(arr);
     return Array.from(arr).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
   }
-  /* Respaldo si el navegador no soporta crypto (muy raro hoy en día) */
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 function hashPasswordSecure(password, salt){
@@ -520,13 +495,10 @@ function hashPasswordSecure(password, salt){
       return bytes.map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
     });
   }
-  /* Respaldo (solo si el navegador no soporta Web Crypto, ej. abierto como archivo
-     local sin HTTPS) — mucho menos fuerte, pero evita que la app deje de funcionar. */
   console.warn('Web Crypto no disponible — usando hash de respaldo, menos seguro.');
   return Promise.resolve(simpleHash(password + '::' + salt));
 }
 
-/* ---------- sistema Pro (código de activación) ---------- */
 function computeCodeChecksum(plan, serial){
   return simpleHash(PRO_SECRET + '-' + plan + '-' + serial).slice(0, 6).toUpperCase();
 }
@@ -578,7 +550,6 @@ function activatePro(){
   render();
   window.alert('¡Activado! Tu Plan Pro vence el ' + expiresAt + '.');
 }
-/* ====== CONFIGURACIÓN DE PLANES Y MÉTODOS DE PAGO ====== */
 var PRO_PLANS_INFO = [
   { id: '30',  label: '30 Días Pro',  usd: 1.99,  tagline: 'Ideal para probar a corto plazo.' },
   { id: '90',  label: '90 Días Pro',  usd: 4.99,  tagline: 'La opción ideal para el día a día.', featured: true },
@@ -613,7 +584,6 @@ function renderComprarPro(){
   var rate = state.bcvRate.usd;
   var html = '<div class="section-label">Comprar Plan Pro</div>';
   html += '<div class="empty-note" style="padding-top:0">Elegí un plan, hacé el pago con los datos de abajo, y avisanos por WhatsApp — te mandamos tu código de activación al instante.</div>';
-
   html += '<div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">';
   PRO_PLANS_INFO.forEach(function(p){
     var selected = state.purchasePlan === p.id;
@@ -624,7 +594,6 @@ function renderComprarPro(){
     html += '</div>';
   });
   html += '</div>';
-
   if (state.purchasePlan){
     var plan = PRO_PLANS_INFO.find(function(p){ return p.id === state.purchasePlan; });
     var bsTotal = rate ? (plan.usd * rate) : null;
@@ -635,7 +604,6 @@ function renderComprarPro(){
     if (!rate) html += '  <div class="goal-numbers" style="color:var(--text-faint)">No pudimos traer la tasa BCV de hoy — el monto en Bs. no se pudo calcular, pagá en USD o consultanos la tasa por WhatsApp.</div>';
     else html += '  <div class="goal-numbers" style="color:var(--text-faint)">Calculado a la tasa BCV de hoy (Bs. ' + rate.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' / $)</div>';
     html += '</div>';
-
     html += '<div class="section-label" style="margin-top:22px">Métodos de pago</div>';
     PAYMENT_METHODS.forEach(function(m, mi){
       html += '<div class="goal-card" style="margin-bottom:10px">';
@@ -649,11 +617,9 @@ function renderComprarPro(){
       });
       html += '</div>';
     });
-
     var waMsg = encodeURIComponent('Hola, ya hice el pago del plan ' + plan.label + ' ($' + plan.usd.toFixed(2) + (bsTotal ? (' / Bs. ' + bsTotal.toFixed(2)) : '') + ') de Tu Bolsillo App. Adjunto el comprobante.');
     html += '<a href="https://wa.me/584121390188?text=' + waMsg + '" target="_blank" rel="noopener" class="primary-btn" style="display:block;text-align:center;text-decoration:none;margin-top:14px">✅ Ya pagué, avisar por WhatsApp</a>';
   }
-
   return html;
 }
 
@@ -691,7 +657,7 @@ function persistAuth(){
   Store.set(STORAGE_KEY_AUTH, { username: state.authUsername, passHash: state.authPassHash, salt: state.authSalt, recoveryHash: state.authRecoveryHash, termsAcceptedAt: state.termsAcceptedAt, loginAttempts: state.loginAttempts, lockedUntil: state.lockedUntil });
 }
 function generateRecoveryCode(){
-  var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; /* sin 0/O ni 1/I/L, para que no se confundan al copiar a mano */
+  var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   var groups = [];
   for (var g = 0; g < 3; g++){
     var s = '';
@@ -767,7 +733,7 @@ function submitLogin(){
     } else {
       state.loginAttempts = (state.loginAttempts || 0) + 1;
       if (state.loginAttempts >= 5){
-        state.lockedUntil = Date.now() + 60000; /* 60 segundos de bloqueo */
+        state.lockedUntil = Date.now() + 60000;
         state.authError = 'Demasiados intentos fallidos. Espera 60 segundos antes de volver a intentar.';
       } else {
         state.authError = 'Usuario o contraseña incorrectos. (' + (5 - state.loginAttempts) + ' intentos restantes antes del bloqueo temporal)';
@@ -865,7 +831,6 @@ function regenerateRecoveryCode(){
   });
 }
 
-/* ---------- categorías personalizadas ---------- */
 function loadCustomCategories(){
   var parsed = Store.get(STORAGE_KEY_CATEGORIES, null);
   if (parsed) state.customCategories = { expense: parsed.expense || [], income: parsed.income || [] };
@@ -875,8 +840,6 @@ function saveCustomCategoriesToStorage(){
   Store.set(STORAGE_KEY_CATEGORIES, state.customCategories);
 }
 
-/* ---------- presupuestos por categoría ---------- */
-/* ---------- ingreso mensual (meta) ---------- */
 function loadFamilyIncomeGoal(){
   state.familyIncomeGoal = Store.get(STORAGE_KEY_INCOME_GOAL, state.familyIncomeGoal);
 }
@@ -920,7 +883,6 @@ function budgetEquivalentInline(amount, currency){
   return ' (≈ ' + fmt(amount / rate, 'USD') + ' hoy)';
 }
 
-/* ---------- compromisos de pago ---------- */
 function loadPayments(){
   state.paymentCommitments = Store.get(STORAGE_KEY_PAYMENTS, state.paymentCommitments);
 }
@@ -990,13 +952,12 @@ function getUpcomingPayments(){
   return list;
 }
 
-/* ---------- notificaciones ---------- */
 function isNotificationSupported(){
   return typeof Notification !== 'undefined' && 'serviceWorker' in navigator;
 }
 function getNotificationStatus(){
   if (!isNotificationSupported()) return 'unsupported';
-  return Notification.permission; /* 'default' | 'granted' | 'denied' */
+  return Notification.permission;
 }
 function requestNotificationPermission(){
   if (!isNotificationSupported()){
@@ -1048,7 +1009,6 @@ function checkAndNotifyPayments(force){
   }).catch(function(e){ console.error('notification error', e); });
 }
 
-/* ---------- exportar / respaldo ---------- */
 function downloadBlob(content, filename, mime){
   var blob = new Blob([content], { type: mime });
   var url = URL.createObjectURL(blob);
@@ -1057,9 +1017,6 @@ function downloadBlob(content, filename, mime){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-/* ---------- cifrado de respaldos (AES-256-GCM, clave derivada de tu contraseña) ----------
-   El respaldo que se sube a Drive o se descarga como JSON queda ilegible para
-   cualquiera que no tenga tu contraseña — ni siquiera con acceso al archivo. */
 function bytesToBase64(bytes){
   var binary = '';
   for (var i = 0; i < bytes.length; i++){ binary += String.fromCharCode(bytes[i]); }
@@ -1139,7 +1096,7 @@ function buildFullBackup(){
 }
 function exportJSON(){
   var pass = window.prompt('Para cifrar tu respaldo, confirma tu contraseña de la app:');
-  if (pass === null) return; /* canceló */
+  if (pass === null) return;
   hashPasswordSecure(pass, state.authSalt || '').then(function(hash){
     if (hash !== state.authPassHash){ window.alert('Contraseña incorrecta — no se generó el respaldo.'); return; }
     var backup = buildFullBackup();
@@ -1150,7 +1107,6 @@ function exportJSON(){
   });
 }
 
-/* ---------- respaldo en Google Drive (opcional, cuenta propia del usuario) ---------- */
 function isGoogleDriveConfigured(){
   return GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID.indexOf('TU_') !== 0;
 }
@@ -1161,7 +1117,7 @@ function ensureGoogleTokenClient(){
   googleTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
     scope: DRIVE_SCOPE,
-    callback: function(){} /* se reasigna en cada llamada según lo que se esté haciendo */
+    callback: function(){}
   });
   return googleTokenClient;
 }
@@ -1306,7 +1262,6 @@ function restoreFromDrive(){
         throw new Error('WRONG_PASSWORD');
       });
     } else {
-      /* Respaldo viejo, de antes de que existiera el cifrado — se sigue aceptando */
       decryptPromise = Promise.resolve(JSON.stringify(pkg));
     }
     return decryptPromise.then(function(jsonString){
@@ -1347,11 +1302,115 @@ function restoreFromDrive(){
     }
   });
 }
+
+/* ---------- Importar Respaldo desde archivo JSON (nuevo) ---------- */
+function handleFileImport(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var pkg = JSON.parse(e.target.result);
+      if (pkg.encrypted) {
+        var pass = window.prompt('Este respaldo está cifrado. Escribe tu contraseña actual para restaurarlo:');
+        if (pass === null) { input.value = ''; return; }
+        decryptBackup(pkg, pass).then(function(jsonString) {
+          var data = JSON.parse(jsonString);
+          applyImportedData(data);
+          input.value = '';
+        }).catch(function() {
+          window.alert('Contraseña incorrecta. No se pudo restaurar.');
+          input.value = '';
+        });
+      } else {
+        window.alert('Este archivo no es un respaldo válido.');
+        input.value = '';
+      }
+    } catch(err) {
+      console.error('Import error', err);
+      window.alert('No se pudo leer el archivo. Asegúrate de que sea el respaldo correcto.');
+      input.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+function applyImportedData(data) {
+  if (!data || typeof data !== 'object') { window.alert('Datos inválidos.'); return; }
+  state.transactions = data.transactions || [];
+  state.goal = normalizeGoal(data.goal);
+  state.budgets = data.budgets || {};
+  state.initialBalance = data.initialBalance || { usd: 0, ves: 0 };
+  state.paymentCommitments = data.paymentCommitments || {};
+  state.customCategories = data.customCategories || { expense: [], income: [] };
+  state.familyIncomeGoal = data.familyIncomeGoal || { usd: 0, ves: 0 };
+  state.currentSavings = data.currentSavings || { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0} };
+  state.savingsStart = data.savingsStart || { monthly: {usd:0,ves:0}, weekly: {usd:0,ves:0} };
+  if (data.savingsHistory) { state.savingsHistory = data.savingsHistory; saveSavingsHistoryToStorage(); }
+  rebuildCategoryLists();
+  saveData();
+  saveBudgetsToStorage();
+  Store.set(STORAGE_KEY_BALANCE, state.initialBalance);
+  savePaymentsToStorage();
+  saveCustomCategoriesToStorage();
+  saveSavingsToStorage();
+  saveSavingsStartToStorage();
+  render();
+  window.alert('✅ Datos restaurados correctamente.');
+}
+
+/* ---------- Respaldo automático en Drive (nuevo) ---------- */
+function shouldAutoBackup() {
+  return isGoogleDriveConfigured() && isProActive() && state.driveAccessToken;
+}
+function autoBackupToDrive() {
+  if (!shouldAutoBackup()) return;
+  console.log('Respaldo automático en Drive activado...');
+  ensureFreshDriveToken().then(function(){
+    return findDriveBackupFile();
+  }).then(function(existing){
+    var content = JSON.stringify(buildFullBackup());
+    var metadata = { name: DRIVE_BACKUP_FILENAME, mimeType: 'application/json' };
+    var boundary = 'mibolsilloapp' + Date.now();
+    var body = '--' + boundary + '\r\n' +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) + '\r\n' +
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/json\r\n\r\n' + content + '\r\n' +
+      '--' + boundary + '--';
+    var url = existing
+      ? 'https://www.googleapis.com/upload/drive/v3/files/' + existing.id + '?uploadType=multipart'
+      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+    return fetch(url, {
+      method: existing ? 'PATCH' : 'POST',
+      headers: { Authorization: 'Bearer ' + state.driveAccessToken, 'Content-Type': 'multipart/related; boundary=' + boundary },
+      body: body
+    });
+  }).then(function(r){
+    if (!r.ok) throw new Error('drive upload failed: ' + r.status);
+    return r.json();
+  }).then(function(f){
+    state.driveFileId = f.id;
+    state.driveStatus = 'connected';
+    state.driveLastBackupAt = new Date().toISOString();
+    render();
+    console.log('Respaldo automático guardado correctamente en Drive.');
+  }).catch(function(e){
+    console.error('autoBackupToDrive error', e);
+    state.driveStatus = 'error';
+    render();
+  });
+}
+var autoBackupTimeout = null;
+function scheduleAutoBackup() {
+  if (autoBackupTimeout) clearTimeout(autoBackupTimeout);
+  autoBackupTimeout = setTimeout(function() {
+    autoBackupToDrive();
+  }, 60000);
+}
+
 function formatDDMMYYYY(dateStr){
   var d = new Date(dateStr + 'T00:00:00');
   return pad2(d.getDate()) + '/' + pad2(d.getMonth()+1) + '/' + d.getFullYear();
 }
-/* ---------- exportar Excel real (.xlsx) con formato ---------- */
 var EXCELJS_CDN = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
 var exceljsLoadPromise = null;
 function loadExcelJS(){
@@ -1424,7 +1483,7 @@ function exportExcel(btn){
     var wb = new ExcelJS.Workbook();
     var sheetName = (MONTHS_ES[vd.getMonth()] + ' ' + vd.getFullYear()).slice(0, 31);
     var sheet = wb.addWorksheet(sheetName);
-    var totalCols = 9; // DESCRIPCIÓN + 7 días + Subtotal
+    var totalCols = 9;
 
     sheet.columns = [{ width: 22 }]
       .concat(new Array(7).fill(0).map(function(){ return { width: 13 }; }))
@@ -1476,7 +1535,6 @@ function exportExcel(btn){
       }
       r += 1;
 
-      // Balance Inicial
       var openingRow = sheet.getRow(r);
       openingRow.getCell(1).value = 'Balance Inicial';
       var lastOpeningVal = null;
@@ -1503,7 +1561,6 @@ function exportExcel(btn){
       }
       r += 1;
 
-      // categorías
       var catMap = {};
       w.txs.forEach(function(t){
         if (!catMap[t.category]) catMap[t.category] = {};
@@ -1534,7 +1591,6 @@ function exportExcel(btn){
         r += 1;
       });
 
-      // Total Ahorro Actual
       var closingRow = sheet.getRow(r);
       closingRow.getCell(1).value = 'Total Ahorro Actual';
       var lastClosingVal = null;
@@ -1558,7 +1614,7 @@ function exportExcel(btn){
         ccell.font = { bold: true, color: { argb: XLS_TEXT } };
         ccell.alignment = { horizontal: c3 === 1 ? 'left' : 'right', vertical: 'middle' };
       }
-      r += 2; // espacio entre semanas
+      r += 2;
     });
 
     return wb.xlsx.writeBuffer().then(function(buffer){
@@ -1578,7 +1634,6 @@ function exportExcel(btn){
   });
 }
 
-/* ---------- sin sincronización en la nube: esta versión guarda todo solo en el dispositivo ---------- */
 function pushToCloud(){ /* no-op: esta versión no usa ninguna nube, todo vive en localStorage */ }
 function fetchWithTimeout(url, ms){
   var timeoutPromise = new Promise(function(_, reject){
@@ -1724,7 +1779,6 @@ function getRateForDate(dateStr){
   return state.bcvRate.usd || null;
 }
 
-/* ---------- derived data ---------- */
 function getViewDate(){
   var d = new Date();
   d.setDate(1);
@@ -1761,9 +1815,8 @@ function getCategoryBreakdown(monthTx){
   return rows;
 }
 function getCategoryBreakdownUSD(monthTx){
-  /* Igual que getCategoryBreakdown, pero unifica todo en un solo total en $ por categoría —
-     cada egreso en Bs. se convierte con la tasa vigente en SU PROPIO día, no la de hoy. */
   var map = {};
+  var anyUnconverted = false;
   monthTx.filter(function(t){ return t.type==='egreso'; }).forEach(function(tx){
     if (!map[tx.category]) map[tx.category] = { category: tx.category, usdTotal: 0, unconverted: false };
     var amt = Number(tx.amount) || 0;
@@ -1773,7 +1826,7 @@ function getCategoryBreakdownUSD(monthTx){
     } else {
       var rate = getRateForDate(tx.date);
       if (rate){ map[tx.category].usdTotal += amt / rate; }
-      else { map[tx.category].unconverted = true; }
+      else { map[tx.category].unconverted = true; anyUnconverted = true; }
     }
   });
   var rows = Object.keys(map).map(function(k){ return map[k]; });
@@ -1793,19 +1846,13 @@ function getMonthTotalsUSD(monthTx){
   monthTx.forEach(function(tx){
     var r = txAmountUSD(tx);
     if (!r.converted){ anyUnconverted = true; return; }
-    if (tx.type === 'ingreso') incomeUSD += r.value; else expenseUSD += Math.abs(r.value);
+    if (tx.type === 'ingreso') incomeUSD = round2(incomeUSD + r.value);
+    else expenseUSD = round2(expenseUSD + Math.abs(r.value));
   });
-  return { incomeUSD: incomeUSD, expenseUSD: expenseUSD, anyUnconverted: anyUnconverted };
+  return { incomeUSD: round2(incomeUSD), expenseUSD: round2(expenseUSD), anyUnconverted: anyUnconverted };
 }
 
-/* ================================================================
-   COACH FINANCIERO
-   Motor de reglas basado en principios profesionales de finanzas
-   personales (liquidez, relación deuda/ingreso, fondo de emergencia,
-   regla 50/30/20, exposición cambiaria). Todo se calcula localmente
-   a partir de tus propios datos — no envía nada a ningún servidor,
-   y no da recomendaciones específicas de inversión.
-   ================================================================ */
+/* COACH */
 function coachCombinedUSD(usd, ves){
   var rate = state.bcvRate.usd;
   return (Number(usd) || 0) + (rate ? (Number(ves) || 0) / rate : 0);
@@ -1825,7 +1872,6 @@ function coachPendingCommitments(){
   return { usd: totalUSD, ves: totalVES };
 }
 function getMonthProjection(){
-  /* Solo tiene sentido si estamos viendo el mes real actual (no uno pasado/futuro navegado) */
   if (state.monthOffset !== 0) return null;
   var today = new Date();
   var diasTranscurridos = today.getDate();
@@ -1851,11 +1897,6 @@ function getFinancialScore(){
   var expenseCombined = coachCombinedUSD(totals.expenseUSD, totals.expenseVES);
   var netCombined = incomeCombined - expenseCombined;
   var ahorroApartado = state.currentSavings.monthly;
-  /* El ahorro apartado nunca se toca, así que no debe contarse como plata disponible
-     para gastar. Para el bloque de Flujo de Caja, se suma al ingreso el Disponible
-     al Inicio del Mes (Saldo Inicial del mes, ya descontado el ahorro que existía
-     exactamente ese primer día, según el historial real de ahorro).
-     OJO: esto es DISTINTO de "Saldo Parcial (Disponible)" que usa el saldo de HOY. */
   var opening = getMonthOpeningBalance();
   var vdForOpening = getViewDate();
   var monthStartStr = vdForOpening.getFullYear() + '-' + pad2(vdForOpening.getMonth()+1) + '-01';
@@ -1872,26 +1913,21 @@ function getFinancialScore(){
   var debtRatio = incomeCombined > 0 ? pendingCombined / incomeCombined : 0;
 
   var score = 0;
-  // 1) Flujo de caja del mes, según el Disponible al Inicio del Mes (30 pts)
   if (incomeWithOpeningCombined > 0 || expenseCombined > 0){
     if (netWithOpeningCombined >= 0) score += 30;
     else if (incomeWithOpeningCombined > 0 && netWithOpeningCombined >= -0.1 * incomeWithOpeningCombined) score += 15;
   } else {
-    score += 15; // sin datos aún, neutral
+    score += 15;
   }
-  // 2) Cobertura de compromisos pendientes con saldo disponible (25 pts)
   if (pendingCombined <= 0) score += 25;
   else if (pendingCombined <= availableCombined) score += 25;
   else if (pendingCombined <= availableCombined * 1.5) score += 10;
-  // 3) Fondo de emergencia / ahorro activo (20 pts)
   if (savingsMonths >= 3) score += 20;
   else if (savingsMonths >= 1) score += 12;
   else if (savingsMonths > 0) score += 6;
-  // 4) Relación compromisos/ingreso (15 pts)
   if (debtRatio === 0) score += 15;
   else if (debtRatio <= 0.35) score += 15;
   else if (debtRatio <= 0.5) score += 8;
-  // 5) Presupuestos respetados (10 pts)
   var breakdown = getCategoryBreakdown(monthTx);
   var budgetedIds = Object.keys(state.budgets).filter(function(id){ var b = state.budgets[id]; return b && ((b.usd||0) > 0 || (b.ves||0) > 0); });
   if (budgetedIds.length === 0) score += 10;
@@ -1922,7 +1958,6 @@ function getCoachInsights(){
   var breakdown = getCategoryBreakdown(monthTx);
   var insights = [];
 
-  // Flujo de caja (Disponible al Inicio del Mes + Ingreso, no todo el patrimonio ni el ingreso puro solo)
   if (m.incomeWithOpeningCombined > 0 || m.expenseCombined > 0){
     if (m.netWithOpeningCombined < 0){
       insights.push({ level:'danger', title:'Gastaste más de lo que tenías disponible', body:'Contando tu Disponible al inicio del mes más lo que ingresó, tus egresos superaron ese total en aproximadamente ' + fmt(Math.abs(m.netWithOpeningCombined),'USD') + '. Tu ahorro apartado no se tocó para este cálculo. Si se repite varios meses seguidos, tu disponible se va a ir achicando.' });
@@ -1933,7 +1968,6 @@ function getCoachInsights(){
     }
   }
 
-  // Cobertura de compromisos pendientes
   if (m.pendingCombined > 0){
     if (m.pendingCombined > m.availableCombined){
       insights.push({ level:'danger', title:'Tus compromisos pendientes superan tu saldo disponible', body:'Tenés ' + fmt(m.pendingCombined,'USD') + ' en pagos pendientes, pero tu saldo disponible es de ' + fmt(m.availableCombined,'USD') + '. Te faltarían ' + fmt(m.pendingCombined - m.availableCombined,'USD') + ' para cubrirlos todos.' });
@@ -1944,7 +1978,6 @@ function getCoachInsights(){
     }
   }
 
-  // Fondo de emergencia
   if (m.expenseCombined > 0){
     if (m.savingsMonths < 1){
       insights.push({ level:'warning', title:'Tu fondo de emergencia es bajo', body:'Tu ahorro actual cubriría menos de 1 mes de gastos al ritmo de este mes. El estándar profesional es tener entre 3 y 6 meses de gastos cubiertos antes de pensar en otros objetivos financieros.' });
@@ -1955,7 +1988,6 @@ function getCoachInsights(){
     }
   }
 
-  // Relación compromisos / ingreso
   if (m.debtRatio > 0){
     if (m.debtRatio > 0.5){
       insights.push({ level:'danger', title:'Tus compromisos de pago son muy altos frente a tus ingresos', body:'Representan el ' + Math.round(m.debtRatio*100) + '% de tus ingresos del mes — muy por encima del 35-40% que la banca usa como umbral de riesgo al evaluar capacidad de pago.' });
@@ -1964,7 +1996,6 @@ function getCoachInsights(){
     }
   }
 
-  // Presupuestos superados (hasta 2)
   var overBudget = [];
   Object.keys(state.budgets).forEach(function(id){
     var b = state.budgets[id];
@@ -1978,7 +2009,6 @@ function getCoachInsights(){
     insights.push({ level:'warning', title:'Presupuesto de ' + catLabel(o.id) + ' superado', body:'Ya llevás el ' + o.pct + '% de tu presupuesto mensual en esta categoría.' });
   });
 
-  // Exposición cambiaria
   var saldo = getCurrentBalance();
   if (state.bcvRate.usd && (saldo.usd !== 0 || saldo.ves !== 0)){
     var totalC = coachCombinedUSD(saldo.usd, saldo.ves);
@@ -1990,7 +2020,6 @@ function getCoachInsights(){
     }
   }
 
-  // Proyección de fin de mes
   var proj = getMonthProjection();
   if (proj && m.incomeCombined > 0){
     if (proj.proyectado > m.incomeCombined * 1.05){
@@ -2000,10 +2029,9 @@ function getCoachInsights(){
     }
   }
 
-  /* --- Integración 50/30/20 (basado en presupuesto) --- */
   var budgetRule = getBudgetRuleAnalysis();
   if (budgetRule.message){
-    insights.push({ level:'warning', title:'La distribución se aleja de la regla 50/30/20', body: budgetRule.message });
+    insights.push({ level:'warning', title:'La distribución se aleja de la regla 50/30/20', body:budgetRule.message });
   }
 
   var order = { danger: 0, warning: 1, info: 2, success: 3 };
@@ -2034,7 +2062,6 @@ function signedAmount(tx){
   return sign * (Number(tx.amount) || 0);
 }
 
-/* --- Función round2 (precisión matemática) --- */
 function round2(n){
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
@@ -2112,7 +2139,6 @@ function getMonthOpeningBalance(){
   return { usd: usd, ves: ves };
 }
 
-/* --- Análisis 50/30/20 basado en presupuesto (traído de la versión familiar) --- */
 function getBudgetCategoryType(categoryId){
   var essentialIds = ['arriendo','alimentos','salud','servicios','condominio','colegio','combustible','credito_jorge','credito_sheila','mantenimiento','telefono'];
   var savingIds = ['inversion','inversiones','acciones','fondo_inversion'];
@@ -2152,7 +2178,7 @@ function getBudgetRuleAnalysis(){
   };
 }
 
-/* ---------- actions ---------- */
+/* ACTIONS */
 function setView(v){ state.view = v; render(); }
 function changeMonth(delta){
   if (delta > 0 && state.monthOffset >= 0) return;
@@ -2245,7 +2271,6 @@ function loadSavings(){
 function saveSavingsToStorage(){
   Store.set(STORAGE_KEY_SAVINGS, state.currentSavings);
 }
-/* ---------- historial exacto del ahorro (para saber cuánto había apartado en cualquier fecha) ---------- */
 function loadSavingsHistory(){
   state.savingsHistory = Store.get(STORAGE_KEY_SAVINGS_HISTORY, state.savingsHistory);
   if (!state.savingsHistory.monthly || state.savingsHistory.monthly.length === 0){
@@ -2288,8 +2313,6 @@ function loadSavingsStart(){
 function saveSavingsStartToStorage(){
   Store.set(STORAGE_KEY_SAVINGS_START, state.savingsStart);
 }
-
-/* --- Migración de ahorro a USD (traído de la versión familiar) --- */
 function migrateSavingsToUsd(){
   var changed = false;
   var periods = ['monthly', 'weekly'];
@@ -2338,7 +2361,7 @@ function saveSavingsStart(period, usd, ves){
 }
 function setMetasView(v){ state.metasView = v; render(); }
 
-/* ---------- icons (inline svg, minimal set) ---------- */
+/* Icons */
 var ICONS = {
   wallet: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>',
   up: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
@@ -2362,26 +2385,17 @@ var ICONS = {
   settings: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
 };
 
-/* ---------- render ---------- */
+/* Render */
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-/* ---------- helpers de color (evitan repetir el mismo ternario en cada render*) ---------- */
-function deltaColor(positive){
-  return positive ? 'var(--teal)' : 'var(--coral)';
-}
-function pctBadgeColor(pct, threshold, overColor, underColor){
-  return pct > threshold ? overColor : underColor;
-}
-function dueUrgencyColor(diffDays){
-  return diffDays < 0 ? '#ff5c5c' : (diffDays <= 2 ? '#E0A94E' : 'var(--text-dim)');
-}
+function deltaColor(positive){ return positive ? 'var(--teal)' : 'var(--coral)'; }
+function pctBadgeColor(pct, threshold, overColor, underColor){ return pct > threshold ? overColor : underColor; }
+function dueUrgencyColor(diffDays){ return diffDays < 0 ? '#ff5c5c' : (diffDays <= 2 ? '#E0A94E' : 'var(--text-dim)'); }
 function dueUrgencyText(diffDays){
   if (diffDays < 0) return 'Venció hace ' + Math.abs(diffDays) + ' día' + (Math.abs(diffDays)===1?'':'s');
   if (diffDays === 0) return 'Vence hoy';
   if (diffDays === 1) return 'Vence mañana';
   return 'Vence en ' + diffDays + ' días';
 }
-
 function renderAuthScreen(){
   var html = '<div class="lock-screen">';
   html += '  <div class="lock-icon" style="color:var(--gold)">' + ICONS.wallet2 + '</div>';
@@ -2437,25 +2451,20 @@ function render(){
   var breakdown = getCategoryBreakdown(monthTx);
   var viewDate = getViewDate();
   var monthLabel = MONTHS_ES[viewDate.getMonth()] + ' ' + viewDate.getFullYear();
-
   var html = '';
   html += '<div class="header">';
   html += '  <div><div class="wordmark">Tu Bolsillo App</div></div>';
   html += '  <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--gold)">' + ICONS.wallet2 + '</span></div>';
   html += '</div>';
-
   if (state.saveError){
     html += '<div class="warn-banner">No se pudo guardar en este navegador. Revisa que no estés en modo privado.</div>';
   }
-
   html += '<div class="month-nav">';
   html += '  <button class="icon-btn" onclick="changeMonth(-1)">' + ICONS.chevronLeft + '</button>';
   html += '  <div class="month-label">' + esc(monthLabel) + '</div>';
   html += '  <button class="icon-btn" ' + (state.monthOffset>=0?'disabled':'') + ' onclick="changeMonth(1)">' + ICONS.chevronRight + '</button>';
   html += '</div>';
-
   if (state.view === 'resumen') html += renderRateBar();
-
   html += '<div class="main">';
   if (state.view === 'resumen') html += renderResumen(totals, breakdown);
   else if (state.view === 'movimientos') html += renderMovimientos(monthTx);
@@ -2465,7 +2474,6 @@ function render(){
   else if (state.view === 'coach') html += renderCoach();
   else if (state.view === 'ajustes') html += renderAjustes();
   html += '</div>';
-
   html += '<nav class="bottom-nav">';
   html += navBtn('resumen', ICONS.grid, 'Resumen');
   html += navBtn('movimientos', ICONS.list, 'Movim.');
@@ -2476,12 +2484,9 @@ function render(){
   html += navBtn('coach', ICONS.coach, 'Coach');
   html += navBtn('ajustes', ICONS.settings, 'Ajustes');
   html += '</nav>';
-
   root.innerHTML = html;
-
   if (state.showForm) renderFormSheet();
 }
-
 function renderRateBar(){
   var r = state.bcvRate;
   var label, sub;
@@ -2503,20 +2508,16 @@ function renderRateBar(){
   html += '</div>';
   return html;
 }
-
 function navBtn(view, icon, label){
   var active = state.view === view;
   return '<button class="nav-btn ' + (active?'active':'') + '" onclick="setView(\'' + view + '\')">' + icon + '<span>' + label + '</span></button>';
 }
-
 function renderCatUSDLine(amountUSD, maxAmt, budgetUSD, unconverted){
   var barColor = 'var(--coral)';
   var badge = '';
   var pct;
   var bottomLine = '<div class="cat-currency-bottom">' + fmt(amountUSD, 'USD') + (unconverted ? ' <span style="color:var(--text-faint)">(hay un egreso en Bs. sin tasa de ese día)</span>' : '') + '</div>';
   if (budgetUSD > 0){
-    /* Con presupuesto: la barra refleja % del PRESUPUESTO (llena = 100% gastado),
-       no el tamaño relativo frente a otras categorías. */
     var bpct = Math.round((amountUSD / budgetUSD) * 100);
     pct = Math.max(4, Math.min(100, bpct));
     var badgeClass = 'badge-ok';
@@ -2534,7 +2535,6 @@ function renderCatUSDLine(amountUSD, maxAmt, budgetUSD, unconverted){
   html += '</div>';
   return html;
 }
-
 function renderCatCurrencyLine(amount, currency, maxAmt, budgetAmt, budgetIsConverted, budgetOrigAmt, budgetOrigCurrency){
   var pct = Math.max(4, Math.round((amount / maxAmt) * 100));
   var barColor = 'var(--coral)';
@@ -2558,11 +2558,9 @@ function renderCatCurrencyLine(amount, currency, maxAmt, budgetAmt, budgetIsConv
   html += '</div>';
   return html;
 }
-
 function renderPaymentAlerts(){
   var upcoming = getUpcomingPayments().filter(function(p){ return p.diffDays <= 7; });
   if (!upcoming.length) return '';
-
   var byCat = {};
   upcoming.forEach(function(p){
     if (!byCat[p.catId]) byCat[p.catId] = { catId: p.catId, label: p.label, items: [], minDiff: p.diffDays };
@@ -2571,19 +2569,16 @@ function renderPaymentAlerts(){
   });
   var groups = Object.keys(byCat).map(function(k){ return byCat[k]; });
   groups.sort(function(a,b){ return a.minDiff - b.minDiff; });
-
   var html = '<div class="section-label" style="color:var(--coral);font-weight:700;letter-spacing:1.2px">⚠ Próximos pagos</div>';
   groups.forEach(function(g, gi){
     var key = 'resumenpago-' + g.catId;
     var expanded = isGroupExpanded(key, gi);
     var color = dueUrgencyColor(g.minDiff);
     var headerText = dueUrgencyText(g.minDiff);
-
     html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + key + '\',' + gi + ')">';
     html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(g.label) + '</span></span>';
     html += '  <span class="group-net" style="color:' + color + '">' + (g.items.length>1 ? (g.items.length+' pagos · ') : '') + headerText + '</span>';
     html += '</button>';
-
     if (expanded){
       html += '<div class="ledger-list" style="margin-bottom:18px">';
       g.items.sort(function(a,b){ return a.diffDays - b.diffDays; }).forEach(function(p){
@@ -2600,7 +2595,6 @@ function renderPaymentAlerts(){
   });
   return html;
 }
-
 function renderTrialWelcomeBanner(){
   if (!state.showTrialWelcome || !state.pro || !state.pro.expiresAt) return '';
   var html = '<div class="goal-card" style="border-left:3px solid var(--teal);background:linear-gradient(135deg, rgba(111,169,141,0.12), var(--surface-2));margin-bottom:14px">';
@@ -2609,7 +2603,6 @@ function renderTrialWelcomeBanner(){
   html += '</div>';
   return html;
 }
-
 function renderProReminderBanner(){
   if (!state.pro || !state.pro.expiresAt) return '';
   var left = proDaysLeft();
@@ -2634,7 +2627,6 @@ function renderProReminderBanner(){
   }
   return html;
 }
-
 function renderResumen(totals, breakdown){
   var monthTx = getMonthTx();
   var balanceUSD = round2(totals.incomeUSD - totals.expenseUSD);
@@ -2644,13 +2636,9 @@ function renderResumen(totals, breakdown){
   var opening = getMonthOpeningBalance();
   var closingUSD = round2(opening.usd + balanceUSD);
   var closingVES = round2(opening.ves + balanceVES);
-
-  // ---- CÁLCULOS DE COMBINADO EN USD (con tasa histórica por transacción) ----
   var totalsUSD = getMonthTotalsUSD(monthTx);
   var incomeCombinedUSD = round2(totalsUSD.incomeUSD);
   var expenseCombinedUSD = round2(totalsUSD.expenseUSD);
-
-  // Saldo disponible al inicio del mes en USD (restando ahorro)
   var ahorroApartado = state.currentSavings.monthly;
   var vdForOpening2 = getViewDate();
   var monthStartStr2 = vdForOpening2.getFullYear() + '-' + pad2(vdForOpening2.getMonth()+1) + '-01';
@@ -2660,24 +2648,9 @@ function renderResumen(totals, breakdown){
   var openingRate = getRateForDate(monthStartStr2);
   var openingAvailableCombined = round2(openingAvailableUSD + (openingRate ? openingAvailableVES / openingRate : 0));
   var totalIncomeCombinedUSD = round2(openingAvailableCombined + incomeCombinedUSD);
-
   var html = '';
   html += renderTrialWelcomeBanner();
   html += renderProReminderBanner();
-
-  // Primera fila: INGRESOS y EGRESOS (solo USD)
-  html += '<div class="stat-grid">';
-  html += '  <div class="stat-card" style="border-color:var(--teal)">';
-  html += '    <div class="stat-card-head"><span>INGRESOS</span><span style="color:var(--teal)">' + ICONS.up + '</span></div>';
-  html += '    <div class="stat-main" style="color:var(--teal)">' + fmt(incomeCombinedUSD, 'USD') + '</div>';
-  html += '  </div>';
-  html += '  <div class="stat-card" style="border-color:var(--coral)">';
-  html += '    <div class="stat-card-head"><span>EGRESOS</span><span style="color:var(--coral)">' + ICONS.down + '</span></div>';
-  html += '    <div class="stat-main" style="color:var(--coral)">' + fmt(expenseCombinedUSD, 'USD') + '</div>';
-  html += '  </div>';
-  html += '</div>';
-
-  // Segunda fila: "Disponible al Inicio del Mes + Ingresos vs. Egresos" (solo USD)
   html += '<div style="font-size:11px;letter-spacing:0.6px;color:var(--text-faint);text-transform:uppercase;margin:2px 2px 6px">Disponible al Inicio del Mes + Ingresos vs. Egresos</div>';
   html += '<div class="stat-grid">';
   html += '  <div class="stat-card" style="border-color:var(--teal)">';
@@ -2689,7 +2662,6 @@ function renderResumen(totals, breakdown){
   html += '    <div class="stat-main" style="color:var(--coral)">' + fmt(expenseCombinedUSD, 'USD') + '</div>';
   html += '  </div>';
   html += '</div>';
-
   var ahorroApartado = state.currentSavings.monthly;
   var parcialUSD = round2(saldo.usd - (ahorroApartado.usd || 0));
   var parcialVES = round2(saldo.ves);
@@ -2708,7 +2680,6 @@ function renderResumen(totals, breakdown){
   html += '  </div>';
   html += '  <div class="saldo-note">Saldo Total (' + fmt(saldo.usd,'USD') + ') Menos tu Ahorro Apartado (' + fmt(ahorroApartado.usd||0,'USD') + ')</div>';
   html += '</div>';
-
   html += '<div class="balance-card">';
   html += '  <div class="balance-line"><span>Balance del Mes (Saldo Inicial + Movimientos)</span><span style="color:var(--gold)">' + ICONS.wallet + '</span></div>';
   html += '  <div class="balance-equal-row">';
@@ -2729,9 +2700,7 @@ function renderResumen(totals, breakdown){
     if (lastRow) html += '  <div class="balance-combined">Total Combinado (Tasa de Cada Día): <strong>' + fmt(lastRow.balanceCombined,'USD') + '</strong></div>';
   }
   html += '</div>';
-
   html += renderPaymentAlerts();
-
   var gastosCatKey = 'resumen-gastoscat';
   var gastosCatExpanded = isGroupExpanded(gastosCatKey, -1);
   html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + gastosCatKey + '\',-1)">';
@@ -2761,20 +2730,16 @@ function renderResumen(totals, breakdown){
   }
   return html;
 }
-
 function renderMovimientos(monthTx){
   var html = '<div class="segmented" style="margin-bottom:16px">';
   html += '  <button class="segment-btn ' + (state.movGroupBy==='semana'?'active-gold':'') + '" onclick="setMovGroupBy(\'semana\')">Por Semana</button>';
   html += '  <button class="segment-btn ' + (state.movGroupBy==='categoria'?'active-gold':'') + '" onclick="setMovGroupBy(\'categoria\')">Por Categoría</button>';
   html += '</div>';
-
   if (monthTx.length === 0){
     html += '<div class="empty-note">No hay movimientos registrados este mes. Toca "Agregar" para anotar el primero.</div>';
     return html;
   }
-
   var groups = state.movGroupBy === 'semana' ? groupTxByWeek(monthTx) : groupTxByCategory(monthTx);
-
   groups.forEach(function(g, gi){
     var title = state.movGroupBy === 'semana'
       ? ('Semana ' + formatDayMonthShort(g.start) + ' – ' + formatDayMonthShort(g.end))
@@ -2789,9 +2754,7 @@ function renderMovimientos(monthTx){
     html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(title) + '</span></span>';
     html += '  <span class="group-net"><span style="color:' + deltaColor(groupNetUSD>=0) + '">' + (groupNetUSD>=0?'+':'') + fmt(groupNetUSD,'USD') + '</span>' + (groupUnconverted?' <span style="color:var(--text-faint)">(hay montos sin tasa)</span>':'') + '</span>';
     html += '</button>';
-
     if (!expanded){ return; }
-
     html += '<div class="ledger-list" style="margin-bottom:20px">';
     var lastDate = null;
     g.txs.forEach(function(t){
@@ -2818,10 +2781,8 @@ function renderMovimientos(monthTx){
     });
     html += '</div>';
   });
-
   return html;
 }
-
 function renderDayRow(r){
   var netUSDColor = r.netUSD > 0 ? 'var(--teal)' : (r.netUSD < 0 ? 'var(--coral)' : 'var(--text-faint)');
   var netVESColor = r.netVES > 0 ? 'var(--teal)' : (r.netVES < 0 ? 'var(--coral)' : 'var(--text-faint)');
@@ -2844,14 +2805,11 @@ function renderDayRow(r){
   html += '</div>';
   return html;
 }
-
 function renderDiario(){
   var rows = getDailyBalances();
   var weeks = groupDayRowsByWeek(rows, 'diario-').slice().reverse();
-
   var html = '<div class="section-label">Balance al cierre de cada día</div>';
   html += '<div class="empty-note" style="padding-top:0">El monto combinado (≈$) usa la tasa BCV vigente ese día específico, no la de hoy.</div>';
-
   weeks.forEach(function(w, wi){
     var label = 'Semana ' + formatDayMonthShort(w.start) + ' – ' + formatDayMonthShort(w.end);
     var expanded = isGroupExpanded(w.key, wi);
@@ -2861,17 +2819,13 @@ function renderDiario(){
     if (w.netUSD !== 0) html += '<span style="color:' + deltaColor(w.netUSD>=0) + '">' + (w.netUSD>=0?'+':'') + fmt(w.netUSD,'USD') + '</span> ';
     if (w.netVES !== 0) html += '<span style="color:' + deltaColor(w.netVES>=0) + '">' + (w.netVES>=0?'+':'') + fmt(w.netVES,'VES') + '</span>';
     html += '</span></button>';
-
     if (!expanded) return;
-
     html += '<div class="ledger-list" style="margin-bottom:20px">';
     w.rows.slice().reverse().forEach(function(r){ html += renderDayRow(r); });
     html += '</div>';
   });
-
   return html;
 }
-
 function renderGoalRing(pct, colorOverride){
   var raw = pct;
   var clamped = Math.max(0, Math.min(100, pct));
@@ -2885,7 +2839,6 @@ function renderGoalRing(pct, colorOverride){
   svg += '</svg>';
   return svg;
 }
-
 function renderGoalRingCard(label, saved, totalTarget, currency, startAmt, goalIncrement){
   var pct = totalTarget > 0 ? Math.round((saved / totalTarget) * 100) : 0;
   var isNegative = saved < 0;
@@ -2903,7 +2856,6 @@ function renderGoalRingCard(label, saved, totalTarget, currency, startAmt, goalI
   html += '</div>';
   return html;
 }
-
 function renderGoalCard(label, saved, goalAmt, currency){
   var pct = goalAmt > 0 ? Math.min(100, Math.max(0, Math.round((saved/goalAmt)*100))) : 0;
   var html = '<div class="goal-card">';
@@ -2913,26 +2865,22 @@ function renderGoalCard(label, saved, goalAmt, currency){
   html += '</div>';
   return html;
 }
-
 function saveAhorroCompleto(period){
   var currentUsd = document.getElementById('ahorroCurrentUsd_' + period).value;
   var goalUsd = document.getElementById('ahorroGoalUsd_' + period).value;
-
   state.currentSavings[period] = { usd: Number(currentUsd)||0 };
   state.goal[period] = { usd: Number(goalUsd)||0 };
-
   recordSavingsHistoryEntry(period, state.currentSavings[period].usd, 0);
   saveSavingsToStorage();
   saveData();
   render();
   pushToCloud();
 }
-
 function renderAhorroForm(period){
   var s = state.currentSavings[period];
   var st = state.savingsStart[period];
   var g = state.goal[period];
-  var metaTotalUsd = st.usd + g.usd;
+  var metaTotalUsd = s.usd + g.usd;
   var html = '<div class="section-label" style="margin-top:22px">Ajustar mi ahorro</div>';
   html += '<div class="ahorro-form-card">';
   html += '  <div class="ahorro-form-row"><label class="form-label">Ahorro Actual (total) en USD</label><input class="input" type="number" inputmode="decimal" placeholder="$" id="ahorroCurrentUsd_' + period + '" value="' + (s.usd||'') + '"></div>';
@@ -2944,7 +2892,6 @@ function renderAhorroForm(period){
   html += '</div>';
   return html;
 }
-
 function renderCollapsibleSection(key, title, badge, defaultExpandIndex, contentHtml){
   var expanded = isGroupExpanded(key, defaultExpandIndex);
   var html = '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + key + '\',' + defaultExpandIndex + ')" style="margin-top:14px">';
@@ -2954,18 +2901,15 @@ function renderCollapsibleSection(key, title, badge, defaultExpandIndex, content
   if (expanded) html += contentHtml;
   return html;
 }
-
 function renderMetasMensual(totals){
   var s = state.currentSavings.monthly;
   var st = state.savingsStart.monthly;
   var g = state.goal.monthly;
-  var totalTargetUSD = st.usd + g.usd;
-
+  var totalTargetUSD = s.usd + g.usd;
   var monthTx = getMonthTx();
   var totalsUSD = getMonthTotalsUSD(monthTx);
   var incomeCombinedUSD = totalsUSD.incomeUSD;
   var expenseCombinedUSD = totalsUSD.expenseUSD;
-
   var opening = getMonthOpeningBalance();
   var vdForOpening = getViewDate();
   var monthStartStr = vdForOpening.getFullYear() + '-' + pad2(vdForOpening.getMonth()+1) + '-01';
@@ -2975,7 +2919,6 @@ function renderMetasMensual(totals){
   var openingRate = getRateForDate(monthStartStr);
   var openingAvailableCombined = openingAvailableUSD + (openingRate ? openingAvailableVES / openingRate : 0);
   var totalIncomeCombinedUSD = openingAvailableCombined + incomeCombinedUSD;
-
   var ingresoPresupuestoHtml = '';
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:0">Ingreso: Meta vs Real</div>';
   ingresoPresupuestoHtml += renderIncomeMetaVsRealCard(totals);
@@ -2987,17 +2930,13 @@ function renderMetasMensual(totals){
   ingresoPresupuestoHtml += renderBudgetVsRealIncomeCard(totals, totalIncomeCombinedUSD, incomeCombinedUSD, openingAvailableCombined);
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Gastos del Mes</div>';
   ingresoPresupuestoHtml += renderBudgetVsExpensesCard(expenseCombinedUSD);
-
   var html = '';
   html += renderCollapsibleSection('metas-ingreso-presupuesto', 'Ingreso y Presupuesto', null, 0, ingresoPresupuestoHtml);
-
   var ahorroHtml = renderGoalRingCard('Ahorro Actual (USD)', s.usd, totalTargetUSD, 'USD', st.usd, g.usd)
     + renderAhorroForm('monthly');
   html += renderCollapsibleSection('metas-ahorro-mes', 'Meta Ahorro del Mes', null, -1, ahorroHtml);
-
   return html;
 }
-
 function renderIncomeMetaVsRealCard(totals){
   var goal = state.familyIncomeGoal;
   if (goal.usd === 0 && goal.ves === 0){
@@ -3020,7 +2959,6 @@ function renderIncomeMetaVsRealCard(totals){
   html += '</div>';
   return html;
 }
-
 function renderIncomeGoalSection(totals){
   var goal = state.familyIncomeGoal;
   var html = '';
@@ -3036,7 +2974,6 @@ function renderIncomeGoalSection(totals){
   html += '</div>';
   return html;
 }
-
 function renderBudgetVsRealIncomeCard(totals, totalIncomeCombined, incomeCombined, openingAvailableCombined){
   var sumUsd = 0, sumVes = 0;
   Object.keys(state.budgets).forEach(function(id){
@@ -3048,7 +2985,6 @@ function renderBudgetVsRealIncomeCard(totals, totalIncomeCombined, incomeCombine
   if (sumUsd === 0 && sumVes === 0){
     return '<div class="empty-note" style="padding-top:0">Todavía no definiste presupuestos por categoría (Ajustes → Presupuesto por Categoría).</div>';
   }
-
   var incomeTotal = totalIncomeCombined;
   var incomeComb = incomeCombined;
   var openingComb = openingAvailableCombined;
@@ -3066,11 +3002,9 @@ function renderBudgetVsRealIncomeCard(totals, totalIncomeCombined, incomeCombine
     incomeComb = totalsUSD.incomeUSD;
     incomeTotal = openingComb + incomeComb;
   }
-
   if (incomeTotal <= 0){
     return '<div class="empty-note" style="padding-top:0">Todavía no cargaste ingresos este mes ni tenés disponible previo — en cuanto haya algo, vas a ver acá qué porcentaje está comprometido en presupuesto.</div>';
   }
-
   var html = '';
   if (sumUsd > 0 && incomeTotal > 0){
     var pctU = Math.round((sumUsd / incomeTotal) * 100);
@@ -3087,7 +3021,6 @@ function renderBudgetVsRealIncomeCard(totals, totalIncomeCombined, incomeCombine
   }
   return html;
 }
-
 function renderBudgetVsExpensesCard(expenseCombinedUSD){
   var sumUsd = 0;
   Object.keys(state.budgets).forEach(function(id){
@@ -3115,7 +3048,6 @@ function renderBudgetVsExpensesCard(expenseCombinedUSD){
   html += '</div>';
   return html;
 }
-
 function renderBudgetVsIncomeCard(){
   var goal = state.familyIncomeGoal;
   var sumUsd = 0, sumVes = 0;
@@ -3157,11 +3089,9 @@ function renderBudgetVsIncomeCard(){
   }
   return html;
 }
-
 function renderPresupuesto(){
   var html = '<div class="section-label" style="margin-top:26px">Presupuesto por Categoria</div>';
   html += '<div class="empty-note" style="padding-top:0">Define un límite mensual por categoría, en Bs. o en $. Si lo pones en $, la app muestra el equivalente en Bs. a la tasa de hoy — el % de cumplimiento siempre se calcula en la moneda original, no se mezcla.</div>';
-
   var totalUSD = 0, totalVES = 0;
   EXPENSE_CATEGORIES.forEach(function(c){
     var b = state.budgets[c.id] || { usd: 0, ves: 0 };
@@ -3174,7 +3104,6 @@ function renderPresupuesto(){
     html += '  <div class="goal-numbers" style="font-size:14px;font-weight:700;color:var(--gold)">' + (totalUSD>0?fmt(totalUSD,'USD'):'') + (totalUSD>0&&totalVES>0?' + ':'') + (totalVES>0?fmt(totalVES,'VES'):'') + '</div>';
     html += '</div>';
   }
-
   EXPENSE_CATEGORIES.forEach(function(c){
     var b = state.budgets[c.id] || { usd: 0, ves: 0 };
     html += '<div class="form-group"><label class="form-label">' + esc(c.label) + '</label>';
@@ -3193,52 +3122,47 @@ function renderPresupuesto(){
   html += '<button class="primary-btn" onclick="saveBudgets()">Guardar presupuestos</button>';
   return html;
 }
-
 function renderSeguridad(){
   var html = '<div class="section-label" style="margin-top:26px">Seguridad</div>';
   html += '<div class="empty-note" style="padding-top:0">Tu cuenta: <strong style="color:var(--gold)">' + esc(state.authUsername) + '</strong>. Todo se guarda solo en este teléfono.</div>';
-
   html += '<div class="section-label" style="margin-top:20px">Cambiar contraseña</div>';
   html += '<div class="form-group"><label class="form-label">Contraseña actual</label><input class="input" type="password" id="curPassInput" placeholder="••••"></div>';
   html += '<div class="form-group"><label class="form-label">Contraseña nueva (mínimo 4 caracteres)</label><input class="input" type="password" id="newPassInput" placeholder="••••"></div>';
   html += '<div class="form-group"><label class="form-label">Repite la contraseña nueva</label><input class="input" type="password" id="newPassInput2" placeholder="••••"></div>';
   html += '<button class="primary-btn" onclick="changeAccountPassword()">Cambiar contraseña</button>';
-
   html += '<div class="section-label" style="margin-top:20px">Cambiar nombre de usuario</div>';
   html += '<div class="form-group"><label class="form-label">Nuevo nombre de usuario</label><input class="input" type="text" id="newUsernameInput" placeholder="' + esc(state.authUsername) + '"></div>';
   html += '<div class="form-group"><label class="form-label">Contraseña actual (para confirmar)</label><input class="input" type="password" id="curPassForUserInput" placeholder="••••"></div>';
   html += '<button class="primary-btn" onclick="changeAccountUsername()">Cambiar nombre de usuario</button>';
-
   html += '<div class="section-label" style="margin-top:20px">Código de recuperación</div>';
   html += '<div class="empty-note" style="padding-top:0">Si perdiste tu código de recuperación (o nunca lo guardaste), generá uno nuevo acá. El anterior queda invalidado.</div>';
   html += '<div class="form-group"><label class="form-label">Contraseña actual (para confirmar)</label><input class="input" type="password" id="curPassForRecoveryInput" placeholder="••••"></div>';
   html += '<button class="primary-btn" style="background:var(--surface-2);color:var(--gold);border:1px solid var(--gold)" onclick="regenerateRecoveryCode()">Generar nuevo código de recuperación</button>';
-
   html += '<button class="primary-btn" style="background:var(--surface-2);color:var(--text-dim);border:1px solid var(--line);margin-top:20px" onclick="lockNow()">Cerrar sesión</button>';
   return html;
 }
-
 function renderRespaldo(){
   var html = '<div class="section-label" style="margin-top:26px">Respaldo de Datos</div>';
   html += '<div class="empty-note" style="padding-top:0">Descarga una copia de tus movimientos, por si algún día necesitas recuperarlos. Elige el formato que prefieras.</div>';
-
   html += '<div class="export-option">';
   html += '  <div class="export-option-title">Hoja de Excel</div>';
   html += '  <div class="export-option-desc">Categorías en filas, días en columnas, con Balance Inicial y Total Ahorro Actual — del mes que estés viendo en Resumen. Se descarga como archivo .xlsx, ya formateado y listo para abrir en Excel.</div>';
   html += '  <button class="primary-btn" style="background:var(--surface-2);color:var(--gold);border:1px solid var(--gold)" onclick="exportExcel(this)">Descargar Excel</button>';
   html += '</div>';
-
   html += '<div class="export-option">';
   html += '  <div class="export-option-title">Respaldo Técnico Completo</div>';
   html += '  <div class="export-option-desc">Archivo JSON con todo: movimientos, metas, presupuestos, saldo inicial, compromisos de pago y categorías. Para restaurar todo exacto si algo se pierde.</div>';
   html += '  <button class="primary-btn" style="background:var(--surface-2);color:var(--gold);border:1px solid var(--gold)" onclick="exportJSON()">Descargar respaldo (JSON)</button>';
   html += '</div>';
-
+  html += '<div class="export-option">';
+  html += '  <div class="export-option-title">Restaurar Respaldo</div>';
+  html += '  <div class="export-option-desc">Selecciona el archivo .json que descargaste antes. Reemplazará todos tus datos actuales por los del respaldo.</div>';
+  html += '  <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="handleFileImport(this)">';
+  html += '  <button class="primary-btn" style="background:var(--surface-2);color:var(--teal);border:1px solid var(--teal);margin-top:8px" onclick="document.getElementById(\'importFileInput\').click()">📂 Importar Respaldo</button>';
+  html += '</div>';
   html += renderGoogleDriveSection();
-
   return html;
 }
-
 function renderGoogleDriveSection(){
   if (!isGoogleDriveConfigured()) return '';
   if (!isProActive()) return renderProGate('Respaldo en Google Drive');
@@ -3259,10 +3183,8 @@ function renderGoogleDriveSection(){
   html += '</div>';
   return html;
 }
-
 function setMetasScreen(s){ state.metasScreen = s; render(); }
 function setAjustesScreen(s){ state.ajustesScreen = s; render(); }
-
 function renderMetasMenuCard(icon, title, subtitle, screen, target){
   var fn = target === 'ajustes' ? 'setAjustesScreen' : 'setMetasScreen';
   var html = '<button class="menu-card" onclick="' + fn + '(\'' + screen + '\')">';
@@ -3272,12 +3194,10 @@ function renderMetasMenuCard(icon, title, subtitle, screen, target){
   html += '</button>';
   return html;
 }
-
 function renderMetasBack(title, target){
   var fn = target === 'ajustes' ? 'setAjustesScreen' : 'setMetasScreen';
   return '<button class="back-btn" onclick="' + fn + '(\'home\')">' + ICONS.chevronLeft + '<span>' + esc(title) + '</span></button>';
 }
-
 function renderAjustesHome(){
   var html = '<div class="section-label">Ajustes</div>';
   html += renderMetasMenuCard(ICONS.coach, 'Plan Pro', isProActive() ? ('Activo hasta ' + state.pro.expiresAt) : 'No activo — Coach y Drive bloqueados', 'pro', 'ajustes');
@@ -3288,7 +3208,6 @@ function renderAjustesHome(){
   html += renderMetasMenuCard(ICONS.list, 'Categorías', 'Crear', 'categorias', 'ajustes');
   return html;
 }
-
 function renderProAjustes(){
   var html = '<div class="section-label">Plan Pro</div>';
   if (isProActive()){
@@ -3311,7 +3230,6 @@ function renderProAjustes(){
   html += renderComprarPro();
   return html;
 }
-
 function renderNotificationBanner(){
   var status = getNotificationStatus();
   var html = '<div class="goal-card" style="margin-bottom:18px">';
@@ -3332,26 +3250,22 @@ function renderNotificationBanner(){
   html += '</div>';
   return html;
 }
-
 function renderPagos(){
   var html = '<div class="section-label">Compromisos de pago</div>';
   html += '<div class="empty-note" style="padding-top:0">Agrega las fechas de pago de cada categoría (pueden ser varias, ej. cuotas de Cashea). En Resumen aparecerá un aviso cuando se acerquen o venzan.</div>';
   html += renderNotificationBanner();
-
   var grandUSD = 0, grandVES = 0;
-  var byMonth = {}; // key -> {usd, ves}
-  var byPerson = {}; // id -> {usd, ves}
-  var byMonthPerson = {}; // monthKey -> personId -> {usd, ves}
+  var byMonth = {};
+  var byPerson = {};
+  var byMonthPerson = {};
   getPaymentCategories().forEach(function(catId){
     (state.paymentCommitments[catId] || []).forEach(function(p){
       var amt = Number(p.amount) || 0;
       if (p.currency === 'USD') grandUSD += amt; else grandVES += amt;
-
       if (p.date){
         var mk = monthKeyFromDate(p.date);
         if (!byMonth[mk]) byMonth[mk] = { usd: 0, ves: 0 };
         if (p.currency === 'USD') byMonth[mk].usd += amt; else byMonth[mk].ves += amt;
-
         if (p.person){
           if (!byMonthPerson[mk]) byMonthPerson[mk] = {};
           if (!byMonthPerson[mk][p.person]) byMonthPerson[mk][p.person] = { usd: 0, ves: 0 };
@@ -3364,7 +3278,6 @@ function renderPagos(){
       }
     });
   });
-
   if (grandUSD > 0 || grandVES > 0){
     var monthKeys = Object.keys(byMonth).sort();
     if (monthKeys.length){
@@ -3385,12 +3298,10 @@ function renderPagos(){
         html += '</div>';
       });
     }
-
     html += '<div class="goal-card" style="margin-bottom:12px">';
     html += '  <div class="goal-row"><span>Total de Pagos</span></div>';
     html += '  <div class="goal-numbers" style="font-size:14px;font-weight:700;color:var(--gold)">' + (grandUSD>0?fmt(grandUSD,'USD'):'') + (grandUSD>0&&grandVES>0?' + ':'') + (grandVES>0?fmt(grandVES,'VES'):'') + '</div>';
     html += '</div>';
-
     var personNames = Object.keys(byPerson).sort();
     if (personNames.length){
       html += '<div class="section-label" style="margin-top:4px">Por persona</div>';
@@ -3404,17 +3315,10 @@ function renderPagos(){
       html += '<div style="height:6px"></div>';
     }
   }
-
-  var sortedCategories = getPaymentCategories().slice().sort(function(a, b){
-    return catLabel(a).localeCompare(catLabel(b));
-  });
+  var sortedCategories = getPaymentCategories().slice().sort(function(a, b){ return catLabel(a).localeCompare(catLabel(b)); });
   var withCommitments = sortedCategories.filter(function(id){ return (state.paymentCommitments[id] || []).length > 0; });
   var withoutCommitments = sortedCategories.filter(function(id){ return (state.paymentCommitments[id] || []).length === 0; });
-
-  withCommitments.forEach(function(catId, ri){
-    html += renderPaymentCategoryBlock(catId, ri === 0 ? 0 : -1);
-  });
-
+  withCommitments.forEach(function(catId, ri){ html += renderPaymentCategoryBlock(catId, ri === 0 ? 0 : -1); });
   if (withoutCommitments.length > 0){
     var otrasKey = 'pagos-otras-categorias';
     var otrasExpanded = isGroupExpanded(otrasKey, -1);
@@ -3423,15 +3327,11 @@ function renderPagos(){
     html += '  <span class="group-net-badge">' + withoutCommitments.length + '</span>';
     html += '</button>';
     if (otrasExpanded){
-      withoutCommitments.forEach(function(catId, ri){
-        html += renderPaymentCategoryBlock(catId, -1);
-      });
+      withoutCommitments.forEach(function(catId, ri){ html += renderPaymentCategoryBlock(catId, -1); });
     }
   }
-
   return html;
 }
-
 function renderPaymentCategoryBlock(catId, defaultExpandIndex){
   var html = '';
   var label = catLabel(catId);
@@ -3445,21 +3345,15 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
     if (p.currency === 'USD'){ subUSDTotal += amt; }
     else { var r = getRateForDate(p.date); if (r) subUSDTotal += amt / r; else hasUnconverted = true; }
   });
-
   html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + key + '\',' + defaultExpandIndex + ')">';
   html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(label) + '</span></span>';
-  if (subUSDTotal > 0){
-    html += '  <span class="group-net-badge">' + fmt(subUSDTotal,'USD') + (hasUnconverted ? ' +' : '') + '</span>';
-  } else {
-    html += '  <span class="group-net-badge">' + list.length + ' fecha' + (list.length===1?'':'s') + '</span>';
-  }
+  if (subUSDTotal > 0){ html += '  <span class="group-net-badge">' + fmt(subUSDTotal,'USD') + (hasUnconverted ? ' +' : '') + '</span>'; }
+  else { html += '  <span class="group-net-badge">' + list.length + ' fecha' + (list.length===1?'':'s') + '</span>'; }
   html += '</button>';
-
   if (expanded){
     var editing = state.editingPayment && state.editingPayment.catId === catId ? state.editingPayment : null;
     var editItem = null;
     if (editing) editItem = (state.paymentCommitments[catId]||[]).find(function(p){ return p.id === editing.id; });
-
     if (list.length){
       html += '<div class="ledger-list" style="margin-bottom:12px">';
       list.forEach(function(p){
@@ -3487,7 +3381,6 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
       });
       html += '</div>';
     }
-
     html += '<div class="sheet-title" style="font-size:13px;margin-bottom:8px">' + (editItem ? 'Editar fecha' : 'Agregar Fecha') + '</div>';
     html += '<div class="form-group"><label class="form-label">Fecha de Pago</label><input class="input" type="date" id="payDate_' + catId + '" value="' + (editItem ? esc(editItem.date) : '') + '"></div>';
     html += '<div class="form-group"><label class="form-label">Persona (opcional)</label><input class="input" type="text" id="payPerson_' + catId + '" placeholder="Ej. Jorge, Sheila…" value="' + (editItem ? esc(editItem.person||'') : '') + '"></div>';
@@ -3502,7 +3395,6 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
   }
   return html;
 }
-
 function renderAjustes(){
   if (state.ajustesScreen === 'pro') return renderMetasBack('Ajustes', 'ajustes') + renderProAjustes();
   if (state.ajustesScreen === 'presupuesto') return renderMetasBack('Ajustes', 'ajustes') + renderPresupuesto();
@@ -3512,7 +3404,6 @@ function renderAjustes(){
   if (state.ajustesScreen === 'categorias') return renderMetasBack('Ajustes', 'ajustes') + renderCategoriasAjustes();
   return renderAjustesHome();
 }
-
 function renderCategoriasAjustes(){
   var html = '<div class="section-label">Categorías de Egreso</div>';
   html += '<div class="empty-note" style="padding-top:0">Las predeterminadas no se pueden eliminar. Agrega las tuyas cuando quieras — se guardan y se sincronizan igual que el resto de tus datos.</div>';
@@ -3535,7 +3426,6 @@ function renderCategoriasAjustes(){
   html += '  <input class="input" type="text" id="newExpenseCatInput" placeholder="Nueva categoría de egreso" style="flex:1">';
   html += '  <button class="primary-btn" style="width:auto;padding:0 14px" onclick="addCustomCategoryFromAjustes(\'egreso\')">Agregar</button>';
   html += '</div>';
-
   html += '<div class="section-label" style="margin-top:26px">Categorías de Ingreso</div>';
   DEFAULT_INCOME_CATEGORIES.forEach(function(c){
     html += '<div class="form-row" style="align-items:center;margin-bottom:8px"><span style="flex:1;font-size:13.5px">' + esc(c.label) + '</span><span style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px">Predeterminada</span></div>';
@@ -3565,7 +3455,6 @@ function addCustomCategoryFromAjustes(type){
   var id = addCustomCategory(type, label);
   if (id) render();
 }
-
 function renderMetasAjustes(){
   var html = '<div class="section-label">Saldo Inicial</div>';
   html += '<div class="empty-note" style="padding-top:0">El punto de partida antes de tu primer movimiento registrado. Ajusta aquí si tu saldo actual no coincide con lo que tienes en la mano o en el banco.</div>';
@@ -3574,23 +3463,19 @@ function renderMetasAjustes(){
   html += '<button class="primary-btn" onclick="saveInitialBalance(document.getElementById(\'balUsdInput\').value, document.getElementById(\'balVesInput\').value)">Guardar saldo inicial</button>';
   return html;
 }
-
 function renderCoach(){
   if (!isProActive()) return renderProGate('Coach Financiero');
   var m = getFinancialScore();
   var insights = getCoachInsights();
   var tip = getCoachTipOfDay();
   var budgetRule = getBudgetRuleAnalysis();
-
   var html = '<div class="section-label">Coach Financiero</div>';
   html += '<div class="empty-note" style="padding-top:0">Un diagnóstico de tus finanzas basado en tus propios datos, calculado en este mismo teléfono. Te ayuda a ver patrones, no reemplaza asesoría profesional para decisiones grandes.</div>';
-
   html += '<div class="saldo-card" style="border-color:' + m.band.color + ';background:linear-gradient(135deg, ' + m.band.color + '22, var(--surface-2));text-align:center;padding:22px 16px">';
   html += '  <div style="font-family:var(--font-mono);font-size:42px;font-weight:700;color:' + m.band.color + '">' + m.score + '</div>';
   html += '  <div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-faint);margin-top:2px">Salud financiera</div>';
   html += '  <div style="font-family:var(--font-display);font-size:15px;color:' + m.band.color + ';margin-top:6px">' + esc(m.band.label) + '</div>';
   html += '</div>';
-
   html += '<div style="display:flex;gap:8px;margin-top:10px">';
   var rateColor = m.savingsRate === null ? 'var(--text-faint)' : m.savingsRate >= 20 ? 'var(--teal)' : m.savingsRate >= 10 ? '#E0A94E' : 'var(--coral)';
   html += '  <div class="goal-card" style="flex:1;text-align:center;padding:14px 10px">';
@@ -3598,7 +3483,6 @@ function renderCoach(){
   html += '    <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;color:' + rateColor + ';margin-top:4px">' + (m.savingsRate === null ? '—' : Math.round(m.savingsRate) + '%') + '</div>';
   html += '    <div style="font-size:9.5px;color:var(--text-faint);margin-top:2px">del ingreso real del mes</div>';
   html += '  </div>';
-
   var proj = getMonthProjection();
   html += '  <div class="goal-card" style="flex:1;text-align:center;padding:14px 10px">';
   html += '    <div style="font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:var(--text-faint)">Proyección Fin de Mes</div>';
@@ -3612,8 +3496,6 @@ function renderCoach(){
   }
   html += '  </div>';
   html += '</div>';
-
-  /* --- Bloque 50/30/20 --- */
   html += '<div class="goal-card" style="margin-top:12px">';
   html += '  <div class="goal-row"><span style="font-weight:700">Regla 50/30/20</span><span class="goal-pct">' + budgetRule.total.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' USD</span></div>';
   [{label:'Necesidades', pct:budgetRule.essentialPct, color:'var(--teal)'},{label:'Deseos', pct:budgetRule.wantPct, color:'var(--coral)'},{label:'Ahorro e Inversión', pct:budgetRule.savingPct, color:'var(--gold)'}].forEach(function(item){
@@ -3624,7 +3506,6 @@ function renderCoach(){
     html += '  </div>';
   });
   html += '</div>';
-
   if (insights.length === 0){
     html += '<div class="empty-note">Todavía no hay suficientes datos este mes para armar un diagnóstico completo. Agregá movimientos y compromisos de pago para ver alertas y recomendaciones acá.</div>';
   } else {
@@ -3638,25 +3519,17 @@ function renderCoach(){
       html += '</div>';
     });
   }
-
   html += '<div class="section-label" style="margin-top:20px">Consejo del día</div>';
   html += '<div class="goal-card" style="border-left:3px solid var(--gold)">';
   html += '  <div class="goal-numbers" style="font-weight:400;line-height:1.6;font-style:italic">' + esc(tip) + '</div>';
   html += '</div>';
-
   html += '<div class="empty-note" style="margin-top:10px;font-size:11px">Este contenido es educativo y se genera con reglas fijas a partir de tus datos — no es asesoría financiera personalizada. Para decisiones importantes de inversión, crédito o impuestos, consultá con un profesional matriculado.</div>';
-
   return html;
 }
-
-function renderMetas(totals, monthTx){
-  return renderMetasMensual(totals);
-}
-
+function renderMetas(totals, monthTx){ return renderMetasMensual(totals); }
 function renderFormSheet(){
   var f = state.form;
   var isEditing = !!state.editingId;
-
   if (!isEditing && !isProActive()){
     var html2 = '';
     html2 += '<div class="sheet-overlay" onclick="closeForm()">';
@@ -3668,22 +3541,18 @@ function renderFormSheet(){
     html2 += '</div>';
     return html2;
   }
-
   var cats = f.type === 'egreso' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
   var noCats = cats.length === 0;
   var canSave = Number(f.amount) > 0 && f.date && !!f.category;
-
   var html = '';
   html += '<div class="sheet-overlay" onclick="closeForm()">';
   html += '  <div class="sheet" onclick="event.stopPropagation()">';
   html += '    <div class="sheet-handle"></div>';
   html += '    <div class="sheet-header"><span class="sheet-title">' + (isEditing ? 'Editar movimiento' : 'Nuevo Movimiento') + '</span><button class="icon-btn" onclick="closeForm()">' + ICONS.x + '</button></div>';
-
   html += '    <div class="segmented">';
   html += '      <button class="segment-btn ' + (f.type==='egreso'?'active-coral':'') + '" onclick="setFormType(\'egreso\')">Egreso</button>';
   html += '      <button class="segment-btn ' + (f.type==='ingreso'?'active-teal':'') + '" onclick="setFormType(\'ingreso\')">Ingreso</button>';
   html += '    </div>';
-
   html += '    <div class="form-group" style="margin-top:12px">';
   if (noCats){
     html += '      <label class="form-label">Categoría</label>';
@@ -3707,7 +3576,6 @@ function renderFormSheet(){
     }
   }
   html += '    </div>';
-
   html += '    <div class="form-row">';
   html += '      <div class="form-group" style="flex:1"><label class="form-label">Monto</label><input class="input" type="number" inputmode="decimal" placeholder="0.00" id="txAmount" value="' + esc(f.amount) + '" oninput="setFormField(\'amount\', this.value); document.getElementById(\'saveTxBtn\').disabled = !(Number(this.value)>0)"></div>';
   html += '      <div class="form-group" style="width:100px"><label class="form-label">Moneda</label>';
@@ -3716,14 +3584,11 @@ function renderFormSheet(){
   html += '          <button class="segment-btn sm ' + (f.currency==='USD'?'active-gold':'') + '" onclick="setFormCurrency(\'USD\')">$</button>';
   html += '        </div></div>';
   html += '    </div>';
-
   html += '    <div class="form-group"><label class="form-label">Fecha</label><input class="input" type="date" id="txDate" value="' + esc(f.date) + '" oninput="setFormField(\'date\', this.value)"></div>';
   html += '    <div class="form-group"><label class="form-label">Nota (opcional)</label><input class="input" type="text" placeholder="Ej. Mercado del mes" id="txNote" value="' + esc(f.note) + '" oninput="setFormField(\'note\', this.value)"></div>';
-
   html += '    <button class="primary-btn" id="saveTxBtn" ' + (canSave?'':'disabled') + ' onclick="saveTransaction()">' + (isEditing ? 'Guardar cambios' : 'Guardar movimiento') + '</button>';
   html += '  </div>';
   html += '</div>';
-
   var wrap = document.createElement('div');
   wrap.innerHTML = html;
   document.getElementById('app').appendChild(wrap.firstChild);
