@@ -231,11 +231,35 @@ var DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.google
 var DRIVE_BACKUP_FILENAME = 'mi-bolsillo-app-respaldo.json';
 /* =================================================== */
 
-var DEFAULT_EXPENSE_CATEGORIES = [];
-var DEFAULT_INCOME_CATEGORIES = [];
-/* Categorías 100% personalizadas: no hay predeterminadas en esta versión.
-   Cada persona crea las suyas en tiempo real. EXPENSE_CATEGORIES / INCOME_CATEGORIES /
-   ALL_CATEGORIES se recalculan con rebuildCategoryLists() cada vez que cambian. */
+var DEFAULT_EXPENSE_CATEGORIES = [
+  {id:'alimentos', label:'Alimentos'},
+  {id:'arriendo', label:'Arriendo'},
+  {id:'salud', label:'Salud'},
+  {id:'condominio', label:'Condominio'},
+  {id:'servicios', label:'Servicios'},
+  {id:'colegio', label:'Colegio'},
+  {id:'combustible', label:'Combustible Moto'},
+  {id:'mantenimiento', label:'Mantenimiento Moto'},
+  {id:'telefono', label:'Recarga Teléfono'},
+  {id:'cashea', label:'Cashea'},
+  {id:'krece', label:'Krece'},
+  {id:'ubii', label:'Ubii App'},
+  {id:'credito_jorge', label:'Crédito Jorge'},
+  {id:'credito_sheila', label:'Crédito Sheila'},
+  {id:'salida', label:'Salida Familiar'},
+  {id:'personal_hijos', label:'Gastos Hijos'},
+  {id:'personal_sheila', label:'Gastos Sheila'},
+  {id:'personal_jorge', label:'Gastos Jorge'},
+  {id:'otro', label:'Otro'}
+];
+var DEFAULT_INCOME_CATEGORIES = [
+  {id:'ingreso_diario', label:'Ingreso Diario'},
+  {id:'sueldo', label:'Sueldo'},
+  {id:'otro_ingreso', label:'Otro Ingreso'}
+];
+/* Categorías personalizadas: se agregan en tiempo real y se guardan/sincronizan
+   junto con el resto de los datos. EXPENSE_CATEGORIES / INCOME_CATEGORIES / ALL_CATEGORIES
+   se recalculan con rebuildCategoryLists() cada vez que cambian. */
 var EXPENSE_CATEGORIES = DEFAULT_EXPENSE_CATEGORIES.slice();
 var INCOME_CATEGORIES = DEFAULT_INCOME_CATEGORIES.slice();
 var ALL_CATEGORIES = EXPENSE_CATEGORIES.concat(INCOME_CATEGORIES);
@@ -1976,6 +2000,12 @@ function getCoachInsights(){
     }
   }
 
+  /* --- Integración 50/30/20 (basado en presupuesto) --- */
+  var budgetRule = getBudgetRuleAnalysis();
+  if (budgetRule.message){
+    insights.push({ level:'warning', title:'La distribución se aleja de la regla 50/30/20', body: budgetRule.message });
+  }
+
   var order = { danger: 0, warning: 1, info: 2, success: 3 };
   insights.sort(function(a,b){ return order[a.level] - order[b.level]; });
   return insights.slice(0, 6);
@@ -2004,10 +2034,16 @@ function signedAmount(tx){
   return sign * (Number(tx.amount) || 0);
 }
 
+/* --- Función round2 (precisión matemática) --- */
+function round2(n){
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 function getCurrentBalance(){
-  var usd = state.initialBalance.usd, ves = state.initialBalance.ves;
+  var usd = round2(state.initialBalance.usd), ves = round2(state.initialBalance.ves);
   state.transactions.forEach(function(tx){
-    if (tx.currency === 'USD') usd += signedAmount(tx); else ves += signedAmount(tx);
+    if (tx.currency === 'USD') usd = round2(usd + signedAmount(tx));
+    else ves = round2(ves + signedAmount(tx));
   });
   return { usd: usd, ves: ves };
 }
@@ -2026,25 +2062,27 @@ function getDailyBalances(){
   var dailyNet = {};
   state.transactions.forEach(function(tx){
     dailyNet[tx.date] = dailyNet[tx.date] || { usd: 0, ves: 0, count: 0 };
-    dailyNet[tx.date][tx.currency === 'USD' ? 'usd' : 'ves'] += signedAmount(tx);
+    var currencyKey = tx.currency === 'USD' ? 'usd' : 'ves';
+    dailyNet[tx.date][currencyKey] = round2(dailyNet[tx.date][currencyKey] + signedAmount(tx));
     dailyNet[tx.date].count += 1;
   });
 
-  var runningUSD = state.initialBalance.usd, runningVES = state.initialBalance.ves;
+  var runningUSD = round2(state.initialBalance.usd), runningVES = round2(state.initialBalance.ves);
   var sortedDates = state.transactions.map(function(t){ return t.date; }).sort();
   var earliestDate = sortedDates.length ? sortedDates[0] : monthStart;
   var openingRate = getRateForDate(earliestDate < monthStart ? earliestDate : monthStart);
-  var runningCombined = state.initialBalance.usd + (openingRate ? state.initialBalance.ves / openingRate : 0);
+  var runningCombined = round2(state.initialBalance.usd + (openingRate ? state.initialBalance.ves / openingRate : 0));
 
   var priorTx = state.transactions.filter(function(t){ return t.date < monthStart; }).sort(function(a,b){ return a.date < b.date ? -1 : 1; });
   priorTx.forEach(function(tx){
     var amt = signedAmount(tx);
     if (tx.currency === 'USD'){
-      runningUSD += amt; runningCombined += amt;
+      runningUSD = round2(runningUSD + amt);
+      runningCombined = round2(runningCombined + amt);
     } else {
-      runningVES += amt;
+      runningVES = round2(runningVES + amt);
       var r = getRateForDate(tx.date);
-      if (r) runningCombined += amt / r;
+      if (r) runningCombined = round2(runningCombined + amt / r);
     }
   });
 
@@ -2053,11 +2091,11 @@ function getDailyBalances(){
     var dateStr = year + '-' + pad2(month + 1) + '-' + pad2(d);
     var net = dailyNet[dateStr] || { usd: 0, ves: 0, count: 0 };
     var dayRate = getRateForDate(dateStr);
-    var netCombined = net.usd + (dayRate ? net.ves / dayRate : 0);
-    runningUSD += net.usd;
-    runningVES += net.ves;
-    runningCombined += netCombined;
-    rows.push({ date: dateStr, day: d, netUSD: net.usd, netVES: net.ves, hasTx: net.count > 0, balanceUSD: runningUSD, balanceVES: runningVES, dayRate: dayRate, netCombined: netCombined, balanceCombined: runningCombined });
+    var netCombined = round2(net.usd + (dayRate ? net.ves / dayRate : 0));
+    runningUSD = round2(runningUSD + net.usd);
+    runningVES = round2(runningVES + net.ves);
+    runningCombined = round2(runningCombined + netCombined);
+    rows.push({ date: dateStr, day: d, netUSD: round2(net.usd), netVES: round2(net.ves), hasTx: net.count > 0, balanceUSD: runningUSD, balanceVES: runningVES, dayRate: dayRate, netCombined: netCombined, balanceCombined: runningCombined });
   }
   return rows;
 }
@@ -2072,6 +2110,46 @@ function getMonthOpeningBalance(){
     }
   });
   return { usd: usd, ves: ves };
+}
+
+/* --- Análisis 50/30/20 basado en presupuesto (traído de la versión familiar) --- */
+function getBudgetCategoryType(categoryId){
+  var essentialIds = ['arriendo','alimentos','salud','servicios','condominio','colegio','combustible','credito_jorge','credito_sheila','mantenimiento','telefono'];
+  var savingIds = ['inversion','inversiones','acciones','fondo_inversion'];
+  if (essentialIds.indexOf(categoryId) !== -1) return 'essential';
+  if (savingIds.indexOf(categoryId) !== -1) return 'saving';
+  return 'want';
+}
+function getBudgetRuleAnalysis(){
+  var rate = Number(state.bcvRate.usd) || 0;
+  var essential = 0;
+  var want = 0;
+  var investment = 0;
+  Object.keys(state.budgets).forEach(function(id){
+    var budget = state.budgets[id] || {};
+    var amount = round2(Number(budget.usd) || 0);
+    if (rate > 0) amount = round2(amount + ((Number(budget.ves) || 0) / rate));
+    var type = getBudgetCategoryType(id);
+    if (type === 'essential') essential = round2(essential + amount);
+    else if (type === 'saving') investment = round2(investment + amount);
+    else want = round2(want + amount);
+  });
+  var savings = round2(Number(state.currentSavings.monthly.usd) || 0);
+  var savingAndInvestment = round2(savings + investment);
+  var total = round2(essential + want + savingAndInvestment);
+  var essentialPct = total > 0 ? round2((essential / total) * 100) : 0;
+  var wantPct = total > 0 ? round2((want / total) * 100) : 0;
+  var savingPct = total > 0 ? round2((savingAndInvestment / total) * 100) : 0;
+  var messages = [];
+  if (essentialPct > 50) messages.push('Necesidades están en ' + essentialPct + '% (límite 50%).');
+  if (wantPct > 30) messages.push('Deseos están en ' + wantPct + '% (límite 30%).');
+  if (savingPct < 20) messages.push('Ahorro e inversión están en ' + savingPct + '% (meta mínima 20%).');
+  return {
+    essential: essential, want: want, investment: investment, savings: savings,
+    savingAndInvestment: savingAndInvestment, total: total,
+    essentialPct: essentialPct, wantPct: wantPct, savingPct: savingPct,
+    message: messages.join(' ')
+  };
 }
 
 /* ---------- actions ---------- */
@@ -2210,6 +2288,56 @@ function loadSavingsStart(){
 function saveSavingsStartToStorage(){
   Store.set(STORAGE_KEY_SAVINGS_START, state.savingsStart);
 }
+
+/* --- Migración de ahorro a USD (traído de la versión familiar) --- */
+function migrateSavingsToUsd(){
+  var changed = false;
+  var periods = ['monthly', 'weekly'];
+  periods.forEach(function(period){
+    var rate = getRateForDate(todayStr()) || 1;
+    var savings = state.currentSavings[period] || { usd: 0, ves: 0 };
+    var goal = state.goal[period] || { usd: 0, ves: 0 };
+    var start = state.savingsStart[period] || { usd: 0, ves: 0 };
+    if (savings.ves){ savings.usd = (Number(savings.usd) || 0) + savings.ves / rate; changed = true; }
+    if (goal.ves){ goal.usd = (Number(goal.usd) || 0) + goal.ves / rate; changed = true; }
+    if (start.ves){ start.usd = (Number(start.usd) || 0) + start.ves / rate; changed = true; }
+    delete savings.ves;
+    delete goal.ves;
+    delete start.ves;
+    state.currentSavings[period] = savings;
+    state.goal[period] = goal;
+    state.savingsStart[period] = start;
+  });
+  var history = state.savingsHistory.monthly || [];
+  history.forEach(function(entry){
+    if (entry.ves){
+      var entryRate = getRateForDate(entry.date) || getRateForDate(todayStr()) || 1;
+      entry.usd = (Number(entry.usd) || 0) + entry.ves / entryRate;
+      delete entry.ves;
+      changed = true;
+    }
+  });
+  if (changed){
+    saveSavingsToStorage();
+    saveSavingsHistoryToStorage();
+    saveData();
+    pushToCloud();
+  }
+}
+function saveSavings(period, usd, ves){
+  state.currentSavings[period] = { usd: Number(usd)||0 };
+  saveSavingsToStorage();
+  render();
+  pushToCloud();
+}
+function saveSavingsStart(period, usd, ves){
+  state.savingsStart[period] = { usd: Number(usd)||0 };
+  saveSavingsStartToStorage();
+  render();
+  pushToCloud();
+}
+function setMetasView(v){ state.metasView = v; render(); }
+
 /* ---------- icons (inline svg, minimal set) ---------- */
 var ICONS = {
   wallet: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>',
@@ -2509,29 +2637,29 @@ function renderProReminderBanner(){
 
 function renderResumen(totals, breakdown){
   var monthTx = getMonthTx();
-  var balanceUSD = totals.incomeUSD - totals.expenseUSD;
-  var balanceVES = totals.incomeVES - totals.expenseVES;
+  var balanceUSD = round2(totals.incomeUSD - totals.expenseUSD);
+  var balanceVES = round2(totals.incomeVES - totals.expenseVES);
   var maxCat = breakdown.length ? breakdown[0].amount : 1;
   var saldo = getCurrentBalance();
   var opening = getMonthOpeningBalance();
-  var closingUSD = opening.usd + balanceUSD;
-  var closingVES = opening.ves + balanceVES;
+  var closingUSD = round2(opening.usd + balanceUSD);
+  var closingVES = round2(opening.ves + balanceVES);
 
   // ---- CÁLCULOS DE COMBINADO EN USD (con tasa histórica por transacción) ----
   var totalsUSD = getMonthTotalsUSD(monthTx);
-  var incomeCombinedUSD = totalsUSD.incomeUSD;
-  var expenseCombinedUSD = totalsUSD.expenseUSD;
+  var incomeCombinedUSD = round2(totalsUSD.incomeUSD);
+  var expenseCombinedUSD = round2(totalsUSD.expenseUSD);
 
   // Saldo disponible al inicio del mes en USD (restando ahorro)
   var ahorroApartado = state.currentSavings.monthly;
   var vdForOpening2 = getViewDate();
   var monthStartStr2 = vdForOpening2.getFullYear() + '-' + pad2(vdForOpening2.getMonth()+1) + '-01';
   var ahorroAlInicioMes = getSavingsAtDate('monthly', monthStartStr2);
-  var openingAvailableUSD = opening.usd - ahorroAlInicioMes.usd;
-  var openingAvailableVES = opening.ves - ahorroAlInicioMes.ves;
+  var openingAvailableUSD = round2(opening.usd - ahorroAlInicioMes.usd);
+  var openingAvailableVES = round2(opening.ves);
   var openingRate = getRateForDate(monthStartStr2);
-  var openingAvailableCombined = openingAvailableUSD + (openingRate ? openingAvailableVES / openingRate : 0);
-  var totalIncomeCombinedUSD = openingAvailableCombined + incomeCombinedUSD;
+  var openingAvailableCombined = round2(openingAvailableUSD + (openingRate ? openingAvailableVES / openingRate : 0));
+  var totalIncomeCombinedUSD = round2(openingAvailableCombined + incomeCombinedUSD);
 
   var html = '';
   html += renderTrialWelcomeBanner();
@@ -2563,8 +2691,8 @@ function renderResumen(totals, breakdown){
   html += '</div>';
 
   var ahorroApartado = state.currentSavings.monthly;
-  var parcialUSD = saldo.usd - (ahorroApartado.usd || 0);
-  var parcialVES = saldo.ves - (ahorroApartado.ves || 0);
+  var parcialUSD = round2(saldo.usd - (ahorroApartado.usd || 0));
+  var parcialVES = round2(saldo.ves);
   html += '<div class="saldo-card" style="border-color:rgba(111,169,141,0.35);background:linear-gradient(135deg, rgba(111,169,141,0.12), var(--surface-2))">';
   html += '  <div class="balance-line"><span>Saldo Parcial (Disponible)</span><span style="color:var(--teal)">' + ICONS.wallet + '</span></div>';
   html += '  <div class="balance-equal-row">';
@@ -2788,14 +2916,12 @@ function renderGoalCard(label, saved, goalAmt, currency){
 
 function saveAhorroCompleto(period){
   var currentUsd = document.getElementById('ahorroCurrentUsd_' + period).value;
-  var currentVes = document.getElementById('ahorroCurrentVes_' + period).value;
   var goalUsd = document.getElementById('ahorroGoalUsd_' + period).value;
-  var goalVes = document.getElementById('ahorroGoalVes_' + period).value;
 
-  state.currentSavings[period] = { usd: Number(currentUsd)||0, ves: Number(currentVes)||0 };
-  state.goal[period] = { usd: Number(goalUsd)||0, ves: Number(goalVes)||0 };
+  state.currentSavings[period] = { usd: Number(currentUsd)||0 };
+  state.goal[period] = { usd: Number(goalUsd)||0 };
 
-  recordSavingsHistoryEntry(period, state.currentSavings[period].usd, state.currentSavings[period].ves);
+  recordSavingsHistoryEntry(period, state.currentSavings[period].usd, 0);
   saveSavingsToStorage();
   saveData();
   render();
@@ -2807,13 +2933,12 @@ function renderAhorroForm(period){
   var st = state.savingsStart[period];
   var g = state.goal[period];
   var metaTotalUsd = st.usd + g.usd;
-  var metaTotalVes = st.ves + g.ves;
   var html = '<div class="section-label" style="margin-top:22px">Ajustar mi ahorro</div>';
   html += '<div class="ahorro-form-card">';
-  html += '  <div class="ahorro-form-row"><label class="form-label">Ahorro Actual (total)</label><div class="form-row"><input class="input" type="number" inputmode="decimal" placeholder="$" id="ahorroCurrentUsd_' + period + '" value="' + (s.usd||'') + '"><input class="input" type="number" inputmode="decimal" placeholder="Bs." id="ahorroCurrentVes_' + period + '" value="' + (s.ves||'') + '"></div></div>';
-  html += '  <div class="ahorro-form-row"><label class="form-label">Cuánto MÁS quieres Ahorrar</label><div class="form-row"><input class="input" type="number" inputmode="decimal" placeholder="$" id="ahorroGoalUsd_' + period + '" value="' + (g.usd||'') + '"><input class="input" type="number" inputmode="decimal" placeholder="Bs." id="ahorroGoalVes_' + period + '" value="' + (g.ves||'') + '"></div></div>';
-  if (metaTotalUsd > 0 || metaTotalVes > 0){
-    html += '  <div class="ahorro-meta-total">Deberías Tener ' + (metaTotalUsd>0?fmt(metaTotalUsd,'USD'):'') + (metaTotalUsd>0&&metaTotalVes>0?' + ':'') + (metaTotalVes>0?fmt(metaTotalVes,'VES'):'') + ' Ahorrado a Fin de Período</div>';
+  html += '  <div class="ahorro-form-row"><label class="form-label">Ahorro Actual (total) en USD</label><input class="input" type="number" inputmode="decimal" placeholder="$" id="ahorroCurrentUsd_' + period + '" value="' + (s.usd||'') + '"></div>';
+  html += '  <div class="ahorro-form-row"><label class="form-label">Meta adicional de este mes (USD)</label><input class="input" type="number" inputmode="decimal" placeholder="$ adicionales" id="ahorroGoalUsd_' + period + '" value="' + (g.usd||'') + '"></div>';
+  if (metaTotalUsd > 0){
+    html += '  <div class="ahorro-meta-total">Deberías Tener ' + fmt(metaTotalUsd,'USD') + ' Ahorrado a Fin de Período</div>';
   }
   html += '  <button class="primary-btn" onclick="saveAhorroCompleto(\'' + period + '\')">Guardar</button>';
   html += '</div>';
@@ -2835,7 +2960,6 @@ function renderMetasMensual(totals){
   var st = state.savingsStart.monthly;
   var g = state.goal.monthly;
   var totalTargetUSD = st.usd + g.usd;
-  var totalTargetVES = st.ves + g.ves;
 
   var monthTx = getMonthTx();
   var totalsUSD = getMonthTotalsUSD(monthTx);
@@ -2868,7 +2992,6 @@ function renderMetasMensual(totals){
   html += renderCollapsibleSection('metas-ingreso-presupuesto', 'Ingreso y Presupuesto', null, 0, ingresoPresupuestoHtml);
 
   var ahorroHtml = renderGoalRingCard('Ahorro Actual (USD)', s.usd, totalTargetUSD, 'USD', st.usd, g.usd)
-    + renderGoalRingCard('Ahorro Actual (Bs.)', s.ves, totalTargetVES, 'VES', st.ves, g.ves)
     + renderAhorroForm('monthly');
   html += renderCollapsibleSection('metas-ahorro-mes', 'Meta Ahorro del Mes', null, -1, ahorroHtml);
 
@@ -3457,6 +3580,7 @@ function renderCoach(){
   var m = getFinancialScore();
   var insights = getCoachInsights();
   var tip = getCoachTipOfDay();
+  var budgetRule = getBudgetRuleAnalysis();
 
   var html = '<div class="section-label">Coach Financiero</div>';
   html += '<div class="empty-note" style="padding-top:0">Un diagnóstico de tus finanzas basado en tus propios datos, calculado en este mismo teléfono. Te ayuda a ver patrones, no reemplaza asesoría profesional para decisiones grandes.</div>';
@@ -3487,6 +3611,18 @@ function renderCoach(){
     html += '    <div style="font-size:9.5px;color:var(--text-faint);margin-top:2px">solo en el mes actual</div>';
   }
   html += '  </div>';
+  html += '</div>';
+
+  /* --- Bloque 50/30/20 --- */
+  html += '<div class="goal-card" style="margin-top:12px">';
+  html += '  <div class="goal-row"><span style="font-weight:700">Regla 50/30/20</span><span class="goal-pct">' + budgetRule.total.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' USD</span></div>';
+  [{label:'Necesidades', pct:budgetRule.essentialPct, color:'var(--teal)'},{label:'Deseos', pct:budgetRule.wantPct, color:'var(--coral)'},{label:'Ahorro e Inversión', pct:budgetRule.savingPct, color:'var(--gold)'}].forEach(function(item){
+    var width = Math.max(0, Math.min(100, item.pct));
+    html += '  <div style="margin-top:12px">';
+    html += '    <div class="goal-row" style="margin-bottom:5px"><span style="font-size:12px;color:var(--text-dim)">' + item.label + '</span><span class="goal-pct" style="color:' + item.color + '">' + item.pct + '%</span></div>';
+    html += '    <div class="bar-track"><div class="bar-fill" style="width:' + width + '%;background:' + item.color + '"></div></div>';
+    html += '  </div>';
+  });
   html += '</div>';
 
   if (insights.length === 0){
@@ -3607,6 +3743,7 @@ loadPayments();
 loadSavings();
 loadSavingsHistory();
 loadSavingsStart();
+migrateSavingsToUsd();
 render();
 fetchBcvRate();
 fetchBcvHistory();
