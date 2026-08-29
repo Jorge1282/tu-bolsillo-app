@@ -1878,16 +1878,12 @@ function getMonthProjection(){
   var diasTotales = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
   if (diasTranscurridos <= 0) return null;
   var monthTx = getMonthTx();
-  var totals = getTotals(monthTx);
-  var proyectadoUSD = (totals.expenseUSD / diasTranscurridos) * diasTotales;
-  var proyectadoVES = (totals.expenseVES / diasTranscurridos) * diasTotales;
-  var expenseCombinedSoFar = coachCombinedUSD(totals.expenseUSD, totals.expenseVES);
-  var proyectadoCombinado = coachCombinedUSD(proyectadoUSD, proyectadoVES);
+  var totalsUSD = getMonthTotalsUSD(monthTx);
+  var proyectado = (totalsUSD.expenseUSD / diasTranscurridos) * diasTotales;
   return {
     diasTranscurridos: diasTranscurridos, diasTotales: diasTotales,
-    expenseUSDSoFar: totals.expenseUSD, expenseVESSoFar: totals.expenseVES,
-    proyectadoUSD: proyectadoUSD, proyectadoVES: proyectadoVES,
-    expenseCombinedSoFar: expenseCombinedSoFar, proyectado: proyectadoCombinado
+    expenseUSDSoFar: totalsUSD.expenseUSD,
+    proyectado: proyectado
   };
 }
 function getFinancialScore(){
@@ -2023,8 +2019,8 @@ function getCoachInsights(){
   var proj = getMonthProjection();
   if (proj && m.incomeCombined > 0){
     if (proj.proyectado > m.incomeCombined * 1.05){
-      var gastadoTxt = (proj.expenseUSDSoFar>0?fmt(proj.expenseUSDSoFar,'USD'):'') + (proj.expenseUSDSoFar>0&&proj.expenseVESSoFar>0?' y ':'') + (proj.expenseVESSoFar>0?fmt(proj.expenseVESSoFar,'VES'):'');
-      var proyTxt = (proj.proyectadoUSD>0?fmt(proj.proyectadoUSD,'USD'):'') + (proj.proyectadoUSD>0&&proj.proyectadoVES>0?' y ':'') + (proj.proyectadoVES>0?fmt(proj.proyectadoVES,'VES'):'');
+      var gastadoTxt = fmt(proj.expenseUSDSoFar,'USD');
+      var proyTxt = fmt(proj.proyectado,'USD');
       insights.push({ level:'warning', title:'Al ritmo actual, vas a cerrar el mes por encima de tu ingreso', body:'Llevás gastado ' + gastadoTxt + ' en ' + proj.diasTranscurridos + ' de ' + proj.diasTotales + ' días. Proyectado a fin de mes: ≈ ' + proyTxt + '.' });
     }
   }
@@ -3487,8 +3483,7 @@ function renderCoach(){
   html += '  <div class="goal-card" style="flex:1;text-align:center;padding:14px 10px">';
   html += '    <div style="font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:var(--text-faint)">Proyección Fin de Mes</div>';
   if (proj){
-    html += '    <div style="font-family:var(--font-mono);font-size:13.5px;font-weight:700;color:var(--gold);margin-top:4px">' + (proj.proyectadoUSD>0?('≈ $ '+proj.proyectadoUSD.toLocaleString('es-VE',{minimumFractionDigits:0,maximumFractionDigits:0})):'') + '</div>';
-    html += '    <div style="font-family:var(--font-mono);font-size:11px;color:var(--gold);opacity:0.85">' + (proj.proyectadoVES>0?('≈ Bs. '+proj.proyectadoVES.toLocaleString('es-VE',{minimumFractionDigits:0,maximumFractionDigits:0})):'') + '</div>';
+    html += '    <div style="font-family:var(--font-mono);font-size:13.5px;font-weight:700;color:var(--gold);margin-top:4px">' + (proj.proyectado>0?('≈ '+fmt(proj.proyectado,'USD')):'') + '</div>';
     html += '    <div style="font-size:9.5px;color:var(--text-faint);margin-top:3px">día ' + proj.diasTranscurridos + ' de ' + proj.diasTotales + '</div>';
   } else {
     html += '    <div style="font-family:var(--font-mono);font-size:14px;color:var(--text-faint);margin-top:4px">—</div>';
