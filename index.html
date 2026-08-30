@@ -2385,6 +2385,11 @@ var ICONS = {
 function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function deltaColor(positive){ return positive ? 'var(--teal)' : 'var(--coral)'; }
 function pctBadgeColor(pct, threshold, overColor, underColor){ return pct > threshold ? overColor : underColor; }
+function personColor(name){
+  if (name === 'Jorge') return '#4A90E2';
+  if (name === 'Sheila') return '#9B59B6';
+  return 'var(--text-faint)';
+}
 function dueUrgencyColor(diffDays){ return diffDays < 0 ? '#ff5c5c' : (diffDays <= 2 ? '#E0A94E' : 'var(--text-dim)'); }
 function dueUrgencyText(diffDays){
   if (diffDays < 0) return 'Venció hace ' + Math.abs(diffDays) + ' día' + (Math.abs(diffDays)===1?'':'s');
@@ -2920,8 +2925,8 @@ function renderMetasMensual(totals){
   ingresoPresupuestoHtml += renderIncomeMetaVsRealCard(totals);
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Ingreso Mensual</div>';
   ingresoPresupuestoHtml += renderIncomeGoalSection(totals);
-  ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Ingreso (Meta)</div>';
-  ingresoPresupuestoHtml += renderBudgetVsIncomeCard();
+  ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Ingreso (Real)</div>';
+  ingresoPresupuestoHtml += renderBudgetVsIncomeCard(monthTx);
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Ingreso Total (Disponible + Ingresos)</div>';
   ingresoPresupuestoHtml += renderBudgetVsRealIncomeCard(totals, totalIncomeCombinedUSD, incomeCombinedUSD, openingAvailableCombined);
   ingresoPresupuestoHtml += '<div class="section-label" style="margin-top:22px">Presupuesto del Mes vs. Gastos del Mes</div>';
@@ -3044,45 +3049,36 @@ function renderBudgetVsExpensesCard(expenseCombinedUSD){
   html += '</div>';
   return html;
 }
-function renderBudgetVsIncomeCard(){
-  var goal = state.familyIncomeGoal;
-  var sumUsd = 0, sumVes = 0;
+function renderBudgetVsIncomeCard(monthTx){
+  var sumUsd = 0;
   Object.keys(state.budgets).forEach(function(id){
     var b = state.budgets[id];
     if (!b) return;
     sumUsd += Number(b.usd) || 0;
-    sumVes += Number(b.ves) || 0;
+    if (b.ves > 0){
+      var todayRate = getRateForDate(todayStr());
+      if (todayRate) sumUsd += b.ves / todayRate;
+    }
   });
-  if (sumUsd === 0 && sumVes === 0){
-    return '<div class="empty-note" style="padding-top:0">Todavía no definiste presupuestos por categoría (Ajustes → Presupuesto por Categoría). Cuando lo hagas, vas a ver acá qué porcentaje de tu ingreso mensual representa el total presupuestado.</div>';
+  if (sumUsd === 0){
+    return '<div class="empty-note" style="padding-top:0">Todavía no definiste presupuestos por categoría (Ajustes → Presupuesto por Categoría). Cuando lo hagas, vas a ver acá qué porcentaje de tu ingreso real del mes representa el total presupuestado.</div>';
   }
-  if (goal.usd === 0 && goal.ves === 0){
+  var incomeRealUSD = getMonthTotalsUSD(monthTx || getMonthTx()).incomeUSD;
+  if (incomeRealUSD === 0){
     var htmlEmpty = '<div class="goal-card">';
     htmlEmpty += '  <div class="goal-row"><span>Total Presupuestado</span></div>';
-    htmlEmpty += '  <div class="goal-numbers">' + (sumUsd>0?fmt(sumUsd,'USD'):'') + (sumUsd>0&&sumVes>0?' + ':'') + (sumVes>0?fmt(sumVes,'VES'):'') + '</div>';
-    htmlEmpty += '  <div class="goal-ring-of" style="margin-top:6px">Definí tu Ingreso Mensual arriba para ver qué porcentaje representa.</div>';
+    htmlEmpty += '  <div class="goal-numbers">' + fmt(sumUsd,'USD') + '</div>';
+    htmlEmpty += '  <div class="goal-ring-of" style="margin-top:6px">Todavía no registraste ingresos reales este mes para ver qué porcentaje representa.</div>';
     htmlEmpty += '</div>';
     return htmlEmpty;
   }
-  var html = '';
-  if (goal.usd > 0){
-    var pctU = Math.round((sumUsd / goal.usd) * 100);
-    var colorU = pctBadgeColor(pctU, 100, 'var(--coral)', 'var(--teal)');
-    html += '<div class="goal-card">';
-    html += '  <div class="goal-row"><span>Presupuesto vs Ingreso (USD)</span><span class="goal-pct" style="color:' + colorU + '">' + pctU + '%</span></div>';
-    html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctU) + '%;background:' + colorU + '"></div></div>';
-    html += '  <div class="goal-numbers">' + fmt(sumUsd,'USD') + ' presupuestado de ' + fmt(goal.usd,'USD') + ' de ingreso esperado' + (pctU>100?' · Excede tu ingreso planeado':'') + '</div>';
-    html += '</div>';
-  }
-  if (goal.ves > 0){
-    var pctV = Math.round((sumVes / goal.ves) * 100);
-    var colorV = pctBadgeColor(pctV, 100, 'var(--coral)', 'var(--teal)');
-    html += '<div class="goal-card" style="margin-top:8px">';
-    html += '  <div class="goal-row"><span>Presupuesto vs Ingreso (Bs.)</span><span class="goal-pct" style="color:' + colorV + '">' + pctV + '%</span></div>';
-    html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pctV) + '%;background:' + colorV + '"></div></div>';
-    html += '  <div class="goal-numbers">' + fmt(sumVes,'VES') + ' presupuestado de ' + fmt(goal.ves,'VES') + ' de ingreso esperado' + (pctV>100?' · Excede tu ingreso planeado':'') + '</div>';
-    html += '</div>';
-  }
+  var pct = Math.round((sumUsd / incomeRealUSD) * 100);
+  var color = pctBadgeColor(pct, 100, 'var(--coral)', 'var(--teal)');
+  var html = '<div class="goal-card">';
+  html += '  <div class="goal-row"><span>Presupuesto vs Ingreso (Real)</span><span class="goal-pct" style="color:' + color + '">' + pct + '%</span></div>';
+  html += '  <div class="bar-track"><div class="bar-fill-gold" style="width:' + Math.min(100,pct) + '%;background:' + color + '"></div></div>';
+  html += '  <div class="goal-numbers">' + fmt(sumUsd,'USD') + ' presupuestado de ' + fmt(incomeRealUSD,'USD') + ' de ingreso real' + (pct>100?' · Excede tu ingreso real':'') + '</div>';
+  html += '</div>';
   return html;
 }
 function renderPresupuesto(){
@@ -3251,47 +3247,84 @@ function renderPagos(){
   html += '<div class="empty-note" style="padding-top:0">Agrega las fechas de pago de cada categoría (pueden ser varias, ej. cuotas de Cashea). En Resumen aparecerá un aviso cuando se acerquen o venzan.</div>';
   html += renderNotificationBanner();
   var grandUSD = 0, grandVES = 0;
-  var byMonth = {};
   var byPerson = {};
-  var byMonthPerson = {};
+  var quincenaGroups = {};
   getPaymentCategories().forEach(function(catId){
     (state.paymentCommitments[catId] || []).forEach(function(p){
       var amt = Number(p.amount) || 0;
       if (p.currency === 'USD') grandUSD += amt; else grandVES += amt;
-      if (p.date){
-        var mk = monthKeyFromDate(p.date);
-        if (!byMonth[mk]) byMonth[mk] = { usd: 0, ves: 0 };
-        if (p.currency === 'USD') byMonth[mk].usd += amt; else byMonth[mk].ves += amt;
-        if (p.person){
-          if (!byMonthPerson[mk]) byMonthPerson[mk] = {};
-          if (!byMonthPerson[mk][p.person]) byMonthPerson[mk][p.person] = { usd: 0, ves: 0 };
-          if (p.currency === 'USD') byMonthPerson[mk][p.person].usd += amt; else byMonthPerson[mk][p.person].ves += amt;
-        }
-      }
       if (p.person){
         if (!byPerson[p.person]) byPerson[p.person] = { usd: 0, ves: 0 };
         if (p.currency === 'USD') byPerson[p.person].usd += amt; else byPerson[p.person].ves += amt;
       }
+      if (p.date){
+        var mk = monthKeyFromDate(p.date);
+        var day = Number(p.date.slice(8, 10));
+        var q = day <= 15 ? 1 : 2;
+        var gk = mk + '|' + q;
+        if (!quincenaGroups[gk]) quincenaGroups[gk] = { mk: mk, q: q, items: [], personTotals: {}, pendienteUSD: 0, pagadoUSD: 0 };
+        var g = quincenaGroups[gk];
+        var amtUSD = 0;
+        if (p.currency === 'USD'){ amtUSD = amt; }
+        else { var r = getRateForDate(p.date); amtUSD = r ? amt / r : 0; }
+        var personName = p.person || 'Sin asignar';
+        g.items.push({ catId: catId, p: p, personName: personName, amountUSD: amtUSD });
+        if (!g.personTotals[personName]) g.personTotals[personName] = 0;
+        g.personTotals[personName] += amtUSD;
+        if (p.paid) g.pagadoUSD += amtUSD; else g.pendienteUSD += amtUSD;
+      }
     });
   });
   if (grandUSD > 0 || grandVES > 0){
-    var monthKeys = Object.keys(byMonth).sort();
-    if (monthKeys.length){
-      html += '<div class="section-label" style="margin-top:0">Por mes</div>';
-      monthKeys.forEach(function(mk){
-        var m = byMonth[mk];
-        html += '<div class="goal-card" style="margin-bottom:8px">';
-        html += '  <div class="goal-row"><span>Total de Pago ' + esc(monthLabelFromKey(mk)) + '</span></div>';
-        html += '  <div class="goal-numbers" style="font-size:13px;font-weight:700;color:var(--gold)">' + (m.usd>0?fmt(m.usd,'USD'):'') + (m.usd>0&&m.ves>0?' + ':'') + (m.ves>0?fmt(m.ves,'VES'):'') + '</div>';
-        var mp = byMonthPerson[mk];
-        if (mp){
-          Object.keys(mp).sort().forEach(function(personName){
-            var pm = mp[personName];
-            if (!pm || (pm.usd<=0 && pm.ves<=0)) return;
-            html += '  <div class="budget-note" style="margin-top:4px"><span style="color:var(--gold);font-weight:600">' + esc(personName) + '</span>: ' + (pm.usd>0?fmt(pm.usd,'USD'):'') + (pm.usd>0&&pm.ves>0?' + ':'') + (pm.ves>0?fmt(pm.ves,'VES'):'') + '</div>';
+    var monthKeysQ = {};
+    Object.keys(quincenaGroups).forEach(function(gk){ monthKeysQ[quincenaGroups[gk].mk] = true; });
+    var sortedMonthKeysQ = Object.keys(monthKeysQ).sort();
+    if (sortedMonthKeysQ.length){
+      html += '<div class="section-label" style="margin-top:0">Por Quincena</div>';
+      sortedMonthKeysQ.forEach(function(mk){
+        var monthKey = 'pagos-mes-' + mk;
+        var monthExpanded = isGroupExpanded(monthKey, -1);
+        html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + monthKey + '\',-1)">';
+        html += '  <span class="group-title-wrap"><span class="group-chevron ' + (monthExpanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(monthLabelFromKey(mk)) + '</span></span>';
+        html += '</button>';
+        if (monthExpanded){
+          [1, 2].forEach(function(q){
+            var gk = mk + '|' + q;
+            var g = quincenaGroups[gk];
+            if (!g) return;
+            var parts = mk.split('-');
+            var lastDay = new Date(Number(parts[0]), Number(parts[1]), 0).getDate();
+            var qLabel = q === 1 ? '1 al 15' : ('16 al ' + lastDay);
+            var qKey = 'pagos-quincena-' + mk + '-' + q;
+            var qExpanded = isGroupExpanded(qKey, -1);
+            html += '<button class="group-header group-header-btn" style="padding-left:24px" onclick="toggleGroup(\'' + qKey + '\',-1)">';
+            html += '  <span class="group-title-wrap"><span class="group-chevron ' + (qExpanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + qLabel + '</span></span>';
+            html += '  <span class="group-net-badge">' + fmt(g.pendienteUSD + g.pagadoUSD, 'USD') + '</span>';
+            html += '</button>';
+            if (qExpanded){
+              html += '<div class="ledger-list" style="margin:6px 0 10px 24px">';
+              g.items.slice().sort(function(a, b){ return a.p.date < b.p.date ? -1 : 1; }).forEach(function(it){
+                var p = it.p;
+                var pColor = personColor(it.personName);
+                var statusColor = deltaColor(p.paid);
+                var statusText = p.paid ? '✓ Pagado' : 'Pendiente';
+                html += '<div class="tx-row">';
+                html += '  <span class="tx-dot" style="background:' + statusColor + '"></span>';
+                html += '  <div style="flex:1;min-width:0"><div class="tx-label">' + esc(formatDayMonthShort(p.date)) + ' · <span style="color:' + pColor + ';font-weight:600">' + esc(it.personName) + '</span> · ' + esc(catLabel(it.catId)) + '</div>' + (p.note ? ('<div class="tx-date">' + esc(p.note) + '</div>') : '') + '</div>';
+                html += '  <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:' + statusColor + ';text-align:right;white-space:nowrap">' + fmt(it.amountUSD,'USD') + '<br><span style="font-size:9.5px">' + statusText + '</span></span>';
+                html += '</div>';
+              });
+              html += '</div>';
+              html += '<div style="margin:0 0 10px 24px">';
+              Object.keys(g.personTotals).sort().forEach(function(personName){
+                html += '  <div class="budget-note" style="margin-top:2px"><span style="color:' + personColor(personName) + ';font-weight:600">' + esc(personName) + '</span>: ' + fmt(g.personTotals[personName],'USD') + '</div>';
+              });
+              html += '  <div class="budget-note" style="margin-top:6px;color:' + deltaColor(false) + '">Pendiente: ' + fmt(g.pendienteUSD,'USD') + '</div>';
+              html += '  <div class="budget-note" style="color:' + deltaColor(true) + '">Pagado: ' + fmt(g.pagadoUSD,'USD') + '</div>';
+              html += '</div>';
+            }
           });
         }
-        html += '</div>';
       });
     }
     html += '<div class="goal-card" style="margin-bottom:12px">';
@@ -3369,8 +3402,8 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
         }
         html += '<div class="tx-row" style="' + (isEditing ? 'border:1px solid var(--gold)' : '') + '">';
         html += '  <span class="tx-dot" style="background:' + deltaColor(p.paid) + '"></span>';
-        html += '  <div style="flex:1;min-width:0"><div class="tx-label">' + esc(formatDayMonthShort(p.date)) + (p.person ? (' · <span style="color:var(--gold);font-weight:600">' + esc(p.person) + '</span>') : '') + (p.note ? (' · ' + esc(p.note)) : '') + '</div>' + (amountDisplay ? ('<div class="tx-date">' + amountDisplay + '</div>') : '') + '</div>';
-        html += '  <button class="trash-btn" style="width:auto;padding:4px 8px;font-family:var(--font-mono);font-size:10px;color:' + deltaColor(p.paid) + '" onclick="togglePaymentPaid(\'' + catId + '\',\'' + p.id + '\')">' + (p.paid?'Pagado':'Pendiente') + '</button>';
+        html += '  <div style="flex:1;min-width:0"><div class="tx-label">' + esc(formatDayMonthShort(p.date)) + (p.person ? (' · <span style="color:' + personColor(p.person) + ';font-weight:600">' + esc(p.person) + '</span>') : '') + (p.note ? (' · ' + esc(p.note)) : '') + '</div>' + (amountDisplay ? ('<div class="tx-date">' + amountDisplay + '</div>') : '') + '</div>';
+        html += '  <button class="trash-btn" style="width:auto;padding:4px 8px;font-family:var(--font-mono);font-size:10px;color:' + deltaColor(p.paid) + '" onclick="togglePaymentPaid(\'' + catId + '\',\'' + p.id + '\')">' + (p.paid?'✓ Pagado':'Pendiente') + '</button>';
         html += '  <button class="trash-btn" onclick="editPaymentDate(\'' + catId + '\',\'' + p.id + '\')" title="Editar">' + ICONS.edit + '</button>';
         html += '  <button class="trash-btn" onclick="deletePaymentDate(\'' + catId + '\',\'' + p.id + '\')" title="Eliminar">' + ICONS.trash + '</button>';
         html += '</div>';
