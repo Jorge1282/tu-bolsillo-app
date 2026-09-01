@@ -342,6 +342,8 @@ var STORAGE_KEY_RATE = 'mibolsilloapp_bcv_rate_v1';
 var STORAGE_KEY_BALANCE = 'mibolsilloapp_initial_balance_v1';
 var STORAGE_KEY_HISTORY = 'mibolsilloapp_bcv_history_v1';
 var STORAGE_KEY_BUDGETS = 'mibolsilloapp_budgets_v1';
+var STORAGE_KEY_MONTHLY_BUDGETS = 'mibolsilloapp_monthly_budgets_v1';
+var STORAGE_KEY_MONTHLY_OPEN_BALANCES = 'mibolsilloapp_monthly_open_balances_v1';
 var STORAGE_KEY_PAYMENTS = 'mibolsilloapp_payments_v1';
 var STORAGE_KEY_SAVINGS = 'mibolsilloapp_savings_v1';
 var STORAGE_KEY_SAVINGS_HISTORY = 'mibolsilloapp_savings_history_v1';
@@ -406,6 +408,8 @@ var state = {
   bcvHistory: {},
   historyStatus: 'idle',
   initialBalance: { usd: 0, ves: 0 },
+  monthlyOpenBalances: {},
+  monthlyBudgets: {},
   syncStatus: 'local',
   authMode: 'setup',
   authUsername: '',
@@ -858,11 +862,41 @@ function saveFamilyIncomeGoal(){
 }
 
 function loadBudgets(){
+  // Cargar presupuestos mensuales
+  state.monthlyBudgets = Store.get(STORAGE_KEY_MONTHLY_BUDGETS, state.monthlyBudgets);
+  
+  // Cargar presupuestos legacy (globales)
   state.budgets = Store.get(STORAGE_KEY_BUDGETS, state.budgets);
+  
+  // Si monthlyBudgets está vacío pero budgets tiene datos, migrar al mes actual
+  if (Object.keys(state.monthlyBudgets).length === 0 && Object.keys(state.budgets).length > 0) {
+    var vd = getViewDate();
+    var currentMonthKey = vd.getFullYear() + '-' + pad2(vd.getMonth() + 1);
+    state.monthlyBudgets[currentMonthKey] = state.budgets;
+    saveMonthlyBudgetsToStorage();
+  }
+  
+  // Cargar saldos de apertura anclados
+  state.monthlyOpenBalances = Store.get(STORAGE_KEY_MONTHLY_OPEN_BALANCES, state.monthlyOpenBalances);
 }
+
+function saveMonthlyBudgetsToStorage(){
+  Store.set(STORAGE_KEY_MONTHLY_BUDGETS, state.monthlyBudgets);
+}
+
 function saveBudgetsToStorage(){
   Store.set(STORAGE_KEY_BUDGETS, state.budgets);
 }
+
+function getMonthKeyForBudget(){
+  var vd = getViewDate();
+  return vd.getFullYear() + '-' + pad2(vd.getMonth() + 1);
+}
+
+function saveMonthlyOpenBalancesToStorage(){
+  Store.set(STORAGE_KEY_MONTHLY_OPEN_BALANCES, state.monthlyOpenBalances);
+}
+
 function saveBudgets(){
   var budgets = {};
   EXPENSE_CATEGORIES.forEach(function(c){
@@ -872,8 +906,15 @@ function saveBudgets(){
     var usd = usdEl ? (Number(usdEl.value) || 0) : 0;
     if (ves > 0 || usd > 0) budgets[c.id] = { usd: usd, ves: ves };
   });
+  
+  // Guardar presupuestos solo para el mes actual
+  var monthKey = getMonthKeyForBudget();
+  state.monthlyBudgets[monthKey] = budgets;
+  
+  // Actualizar state.budgets para compatibilidad (pero no lo guardamos por defecto)
   state.budgets = budgets;
-  saveBudgetsToStorage();
+  
+  saveMonthlyBudgetsToStorage();
   pushToCloud();
   render();
   window.alert('Presupuestos guardados.');
@@ -1086,6 +1127,8 @@ function buildFullBackup(){
     transactions: state.transactions,
     goal: state.goal,
     budgets: state.budgets,
+    monthlyBudgets: state.monthlyBudgets,
+    monthlyOpenBalances: state.monthlyOpenBalances,
     initialBalance: state.initialBalance,
     paymentCommitments: state.paymentCommitments,
     familyIncomeGoal: state.familyIncomeGoal,
@@ -2127,14 +2170,22 @@ function getDailyBalances(){
 
 function getMonthOpeningBalance(){
   var vd = getViewDate();
-  var monthStart = vd.getFullYear() + '-' + pad2(vd.getMonth() + 1) + '-01';
+  var monthKey = vd.getFullYear() + '-' + pad2(vd.getMonth() + 1);
+  var monthStart = monthKey + '-01';
+  
+  // Si existe un saldo de apertura anclado manualmente para este mes, usarlo
+  if (state.monthlyOpenBalances && state.monthlyOpenBalances[monthKey]) {
+    return state.monthlyOpenBalances[monthKey];
+  }
+  
+  // Si no, calcularlo automáticamente: Saldo Inicial Global + movimientos de meses anteriores
   var usd = state.initialBalance.usd, ves = state.initialBalance.ves;
   state.transactions.forEach(function(tx){
     if (tx.date < monthStart){
       if (tx.currency === 'USD') usd += signedAmount(tx); else ves += signedAmount(tx);
     }
   });
-  return { usd: usd, ves: ves };
+  return { usd: round2(usd), ves: round2(ves) };
 }
 
 function getBudgetCategoryType(categoryId){
@@ -2149,8 +2200,13 @@ function getBudgetRuleAnalysis(){
   var essential = 0;
   var want = 0;
   var investment = 0;
-  Object.keys(state.budgets).forEach(function(id){
-    var budget = state.budgets[id] || {};
+  
+  // Obtener presupuestos del mes actual
+  var monthKey = getMonthKeyForBudget();
+  var monthlyBudgets = state.monthlyBudgets[monthKey] || {};
+  
+  Object.keys(monthlyBudgets).forEach(function(id){
+    var budget = monthlyBudgets[id] || {};
     var amount = round2(Number(budget.usd) || 0);
     if (rate > 0) amount = round2(amount + ((Number(budget.ves) || 0) / rate));
     var type = getBudgetCategoryType(id);
@@ -2666,7 +2722,7 @@ function renderResumen(totals, breakdown){
   html += '  </div>';
   html += '</div>';
   var ahorroApartado = state.currentSavings.monthly;
-  var parcialUSD = round2(saldo.usd - (ahorroApartado.usd || 0));
+  var parcialUSD = round2(Math.max(0, saldo.usd - (ahorroApartado.usd || 0)));
   var parcialVES = round2(saldo.ves);
   html += '<div class="saldo-card" style="border-color:rgba(111,169,141,0.35);background:linear-gradient(135deg, rgba(111,169,141,0.12), var(--surface-2))">';
   html += '  <div class="balance-line"><span>Saldo Parcial (Disponible)</span><span style="color:var(--teal)">' + ICONS.wallet + '</span></div>';
@@ -3086,9 +3142,14 @@ function renderBudgetVsIncomeCard(monthTx){
 function renderPresupuesto(){
   var html = '<div class="section-label" style="margin-top:26px">Presupuesto por Categoria</div>';
   html += '<div class="empty-note" style="padding-top:0">Define un límite mensual por categoría, en Bs. o en $. Si lo pones en $, la app muestra el equivalente en Bs. a la tasa de hoy — el % de cumplimiento siempre se calcula en la moneda original, no se mezcla.</div>';
+  
+  // Obtener presupuestos del mes actual
+  var monthKey = getMonthKeyForBudget();
+  var monthlyBudgets = state.monthlyBudgets[monthKey] || {};
+  
   var totalUSD = 0, totalVES = 0;
   EXPENSE_CATEGORIES.forEach(function(c){
-    var b = state.budgets[c.id] || { usd: 0, ves: 0 };
+    var b = monthlyBudgets[c.id] || { usd: 0, ves: 0 };
     totalUSD += Number(b.usd) || 0;
     totalVES += Number(b.ves) || 0;
   });
@@ -3099,7 +3160,7 @@ function renderPresupuesto(){
     html += '</div>';
   }
   EXPENSE_CATEGORIES.forEach(function(c){
-    var b = state.budgets[c.id] || { usd: 0, ves: 0 };
+    var b = monthlyBudgets[c.id] || { usd: 0, ves: 0 };
     html += '<div class="form-group"><label class="form-label">' + esc(c.label) + '</label>';
     html += '  <div class="form-row">';
     html += '    <input class="input" type="number" inputmode="decimal" placeholder="Bs." id="budgetVes_' + c.id + '" value="' + (b.ves || '') + '" style="flex:1">';
