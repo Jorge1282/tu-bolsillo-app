@@ -2235,7 +2235,6 @@ function getBudgetRuleAnalysis(){
 /* ACTIONS */
 function setView(v){ state.view = v; render(); }
 function changeMonth(delta){
-  if (delta > 0 && state.monthOffset >= 0) return;
   state.monthOffset += delta;
   render();
 }
@@ -2521,7 +2520,7 @@ function render(){
   html += '<div class="month-nav">';
   html += '  <button class="icon-btn" onclick="changeMonth(-1)">' + ICONS.chevronLeft + '</button>';
   html += '  <div class="month-label">' + esc(monthLabel) + '</div>';
-  html += '  <button class="icon-btn" ' + (state.monthOffset>=0?'disabled':'') + ' onclick="changeMonth(1)">' + ICONS.chevronRight + '</button>';
+  html += '  <button class="icon-btn" onclick="changeMonth(1)">' + ICONS.chevronRight + '</button>';
   html += '</div>';
   if (state.view === 'resumen') html += renderRateBar();
   html += '<div class="main">';
@@ -3305,15 +3304,25 @@ function renderNotificationBanner(){
   html += '</div>';
   return html;
 }
+function getViewMonthKey(){
+  var vd = getViewDate();
+  return vd.getFullYear() + '-' + pad2(vd.getMonth() + 1);
+}
+function getCategoryCommitmentsForMonth(catId, monthKey){
+  return (state.paymentCommitments[catId] || []).filter(function(p){
+    return p.date && monthKeyFromDate(p.date) === monthKey;
+  });
+}
 function renderPagos(){
-  var html = '<div class="section-label">Compromisos de pago</div>';
-  html += '<div class="empty-note" style="padding-top:0">Agrega las fechas de pago de cada categoría (pueden ser varias, ej. cuotas de Cashea). En Resumen aparecerá un aviso cuando se acerquen o venzan.</div>';
+  var viewMonthKey = getViewMonthKey();
+  var html = '<div class="section-label">Compromisos de pago · ' + esc(monthLabelFromKey(viewMonthKey)) + '</div>';
+  html += '<div class="empty-note" style="padding-top:0">Agrega las fechas de pago de cada categoría (pueden ser varias, ej. cuotas de Cashea). En Resumen aparecerá un aviso cuando se acerquen o venzan. Los meses anteriores quedan archivados: navega con las flechas de arriba para verlos.</div>';
   html += renderNotificationBanner();
   var grandUSD = 0, grandVES = 0;
   var byPerson = {};
   var quincenaGroups = {};
   getPaymentCategories().forEach(function(catId){
-    (state.paymentCommitments[catId] || []).forEach(function(p){
+    getCategoryCommitmentsForMonth(catId, viewMonthKey).forEach(function(p){
       var amt = Number(p.amount) || 0;
       if (p.currency === 'USD') grandUSD += amt; else grandVES += amt;
       if (p.person){
@@ -3408,30 +3417,31 @@ function renderPagos(){
     }
   }
   var sortedCategories = getPaymentCategories().slice().sort(function(a, b){ return catLabel(a).localeCompare(catLabel(b)); });
-  var withCommitments = sortedCategories.filter(function(id){ return (state.paymentCommitments[id] || []).length > 0; });
-  var withoutCommitments = sortedCategories.filter(function(id){ return (state.paymentCommitments[id] || []).length === 0; });
-  withCommitments.forEach(function(catId, ri){ html += renderPaymentCategoryBlock(catId, ri === 0 ? 0 : -1); });
+  var withCommitments = sortedCategories.filter(function(id){ return getCategoryCommitmentsForMonth(id, viewMonthKey).length > 0; });
+  var withoutCommitments = sortedCategories.filter(function(id){ return getCategoryCommitmentsForMonth(id, viewMonthKey).length === 0; });
+  withCommitments.forEach(function(catId, ri){ html += renderPaymentCategoryBlock(catId, ri === 0 ? 0 : -1, viewMonthKey); });
   if (withoutCommitments.length > 0){
     var otrasKey = 'pagos-otras-categorias';
     var otrasExpanded = isGroupExpanded(otrasKey, -1);
     html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + otrasKey + '\',-1)">';
-    html += '  <span class="group-title-wrap"><span class="group-chevron ' + (otrasExpanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">Otras categorías (sin fechas aún)</span></span>';
+    html += '  <span class="group-title-wrap"><span class="group-chevron ' + (otrasExpanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">Otras categorías (sin pagos este mes)</span></span>';
     html += '  <span class="group-net-badge">' + withoutCommitments.length + '</span>';
     html += '</button>';
     if (otrasExpanded){
-      withoutCommitments.forEach(function(catId, ri){ html += renderPaymentCategoryBlock(catId, -1); });
+      withoutCommitments.forEach(function(catId, ri){ html += renderPaymentCategoryBlock(catId, -1, viewMonthKey); });
     }
   }
   return html;
 }
-function renderPaymentCategoryBlock(catId, defaultExpandIndex){
+function renderPaymentCategoryBlock(catId, defaultExpandIndex, monthKey){
   var html = '';
   var label = catLabel(catId);
   var key = 'pagoscat-' + catId;
   var expanded = isGroupExpanded(key, defaultExpandIndex);
-  var list = (state.paymentCommitments[catId] || []).slice().sort(function(a,b){ return a.date < b.date ? -1 : 1; });
+  var list = getCategoryCommitmentsForMonth(catId, monthKey).slice().sort(function(a,b){ return a.date < b.date ? -1 : 1; });
   var subUSDTotal = 0, hasUnconverted = false;
   list.forEach(function(p){
+    if (p.paid) return;
     var amt = Number(p.amount) || 0;
     if (!amt) return;
     if (p.currency === 'USD'){ subUSDTotal += amt; }
@@ -3439,7 +3449,9 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
   });
   html += '<button class="group-header group-header-btn" onclick="toggleGroup(\'' + key + '\',' + defaultExpandIndex + ')">';
   html += '  <span class="group-title-wrap"><span class="group-chevron ' + (expanded?'open':'') + '">' + ICONS.chevronDown + '</span><span class="group-title">' + esc(label) + '</span></span>';
+  var allPaid = list.length > 0 && list.every(function(p){ return p.paid; });
   if (subUSDTotal > 0){ html += '  <span class="group-net-badge">' + fmt(subUSDTotal,'USD') + (hasUnconverted ? ' +' : '') + '</span>'; }
+  else if (allPaid){ html += '  <span class="group-net-badge" style="color:' + deltaColor(true) + '">✓ Pagado</span>'; }
   else { html += '  <span class="group-net-badge">' + list.length + ' fecha' + (list.length===1?'':'s') + '</span>'; }
   html += '</button>';
   if (expanded){
@@ -3474,7 +3486,7 @@ function renderPaymentCategoryBlock(catId, defaultExpandIndex){
       html += '</div>';
     }
     html += '<div class="sheet-title" style="font-size:13px;margin-bottom:8px">' + (editItem ? 'Editar fecha' : 'Agregar Fecha') + '</div>';
-    html += '<div class="form-group"><label class="form-label">Fecha de Pago</label><input class="input" type="date" id="payDate_' + catId + '" value="' + (editItem ? esc(editItem.date) : '') + '"></div>';
+    html += '<div class="form-group"><label class="form-label">Fecha de Pago</label><input class="input" type="date" id="payDate_' + catId + '" value="' + (editItem ? esc(editItem.date) : esc(monthKey + '-01')) + '"></div>';
     html += '<div class="form-group"><label class="form-label">Persona (opcional)</label><input class="input" type="text" id="payPerson_' + catId + '" placeholder="Ej. Jorge, Sheila…" value="' + (editItem ? esc(editItem.person||'') : '') + '"></div>';
     html += '<div class="form-group"><label class="form-label">Nota (opcional)</label><input class="input" type="text" id="payNote_' + catId + '" placeholder="Ej. Cuota 2 de 3" value="' + (editItem ? esc(editItem.note||'') : '') + '"></div>';
     html += '<div class="form-row">';
